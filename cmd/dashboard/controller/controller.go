@@ -140,6 +140,32 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.PATCH("/ddns/:id", commonHandler(updateDDNS))
 	auth.POST("/batch-delete/ddns", commonHandler(batchDeleteDDNS))
 
+	// 批量操作 API
+	auth.POST("/batch/servers", commonHandler(BatchServerOperation))
+	auth.GET("/batch/history", commonHandler(GetBatchOperationHistory))
+	auth.GET("/batch/servers/:server_id/metrics", commonHandler(GetServerMetrics))
+
+		// 快捷命令 API
+		auth.GET("/quick-command", listHandler(listQuickCommands))
+		auth.POST("/quick-command", commonHandler(createQuickCommand))
+		auth.PATCH("/quick-command/:id", commonHandler(updateQuickCommand))
+		auth.POST("/batch-delete/quick-command", commonHandler(batchDeleteQuickCommand))
+		auth.POST("/quick-command/execute", commonHandler(executeBatchCommand))
+
+		// 命令历史 API
+		auth.GET("/command-history", listHandler(listCommandHistory))
+		auth.POST("/command-history", commonHandler(addCommandHistory))
+
+		// 终端会话 API
+		auth.GET("/terminal-session", listHandler(listTerminalSessions))
+		auth.GET("/terminal-session/:id/events", commonHandler(getTerminalSessionEvents))
+
+		// 命令策略 API
+		auth.GET("/command-policy", listHandler(listCommandPolicies))
+		auth.POST("/command-policy", commonHandler(createCommandPolicy))
+		auth.PATCH("/command-policy/:id", commonHandler(updateCommandPolicy))
+		auth.POST("/batch-delete/command-policy", commonHandler(batchDeleteCommandPolicy))
+
 	auth.GET("/nat", listHandler(listNAT))
 	auth.POST("/nat", commonHandler(createNAT))
 	auth.PATCH("/nat/:id", commonHandler(updateNAT))
@@ -361,6 +387,9 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		regexp.MustCompile(`^/dashboard/settings/user$`),
 		regexp.MustCompile(`^/dashboard/settings/online-user$`),
 		regexp.MustCompile(`^/dashboard/settings/waf$`),
+			regexp.MustCompile(`^/dashboard/batch-operations$`),
+			regexp.MustCompile(`^/dashboard/batch-history$`),
+			regexp.MustCompile(`^/dashboard/server-metrics$`),
 	}
 
 	getFallbackStatusCode := func(path string) int {
