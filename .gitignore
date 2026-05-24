@@ -20,6 +20,8 @@
 /cmd/dashboard/*-dist
 !/cmd/dashboard/admin-dist/.gitkeep
 !/cmd/dashboard/user-dist/.gitkeep
+!/cmd/dashboard/nazhua-dist/index.html
+!/cmd/dashboard/nezha-ascii-dist/index.html
 /config.yml
 /resource/template/theme-custom
 /resource/static/custom

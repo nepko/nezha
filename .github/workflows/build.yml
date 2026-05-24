@@ -60,12 +60,9 @@ jobs:
 
       - name: Ensure other dist directories have embeddable files
         run: |
-          for dir in user-dist nazhua-dist nezha-ascii-dist; do
-            mkdir -p "cmd/dashboard/$dir"
-            if [ ! -f "cmd/dashboard/$dir/.gitkeep" ]; then
-              echo "placeholder" > "cmd/dashboard/$dir/.gitkeep"
-            fi
-          done
+          mkdir -p cmd/dashboard/nazhua-dist cmd/dashboard/nezha-ascii-dist
+          echo '<!DOCTYPE html><html><head></head><body>placeholder</body></html>' > cmd/dashboard/nazhua-dist/index.html
+          echo '<!DOCTYPE html><html><head></head><body>placeholder</body></html>' > cmd/dashboard/nezha-ascii-dist/index.html
 
       - name: Generate swagger docs
         run: |
