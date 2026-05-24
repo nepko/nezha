@@ -58,6 +58,14 @@ jobs:
           name: admin-dist
           path: cmd/dashboard/admin-dist/
 
+      - name: Ensure other dist directories have embeddable files
+        run: |
+          for dir in user-dist nazhua-dist nezha-ascii-dist; do
+            if [ ! -f "cmd/dashboard/$dir/.gitkeep" ]; then
+              echo "placeholder" > "cmd/dashboard/$dir/.gitkeep"
+            fi
+          done
+
       - name: Generate swagger docs
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest
