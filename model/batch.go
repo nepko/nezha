@@ -59,9 +59,9 @@ type BatchHistoryResponse struct {
 	Histories []BatchOperationHistory    `json:"histories"`
 }
 
-// ServerMetricsResponse 服务器监控指标响应
-// swagger:model ServerMetricsResponse
-type ServerMetricsResponse struct {
+// BatchServerMetricsResponse 服务器监控指标响应
+// swagger:model BatchServerMetricsResponse
+type BatchServerMetricsResponse struct {
 	ServerID   uint                   `json:"server_id"`
 	ServerName string                 `json:"server_name"`
 	Metrics    map[string]interface{} `json:"metrics"`

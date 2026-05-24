@@ -213,7 +213,7 @@ func GetBatchOperationHistory(c *gin.Context) {
 // @Param server_id path uint true "服务器ID"
 // @Param metrics query string false "指标名称(逗号分隔)" default("disk_usage,memory_usage,cpu_usage")
 // @Param period query string false "时间周期" default("24h") Enums(1h,6h,24h,7d,30d)
-// @Success 200 {object} model.CommonResponse[model.ServerMetricsResponse]
+// @Success 200 {object} model.CommonResponse[model.BatchServerMetricsResponse]
 // @Router /batch/servers/{server_id}/metrics [get]
 // @Security BearerAuth
 func GetServerMetrics(c *gin.Context) {
@@ -297,9 +297,9 @@ func GetServerMetrics(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, model.CommonResponse[model.ServerMetricsResponse]{
+	c.JSON(http.StatusOK, model.CommonResponse[model.BatchServerMetricsResponse]{
 		Success: true,
-		Data: model.ServerMetricsResponse{
+		Data: model.BatchServerMetricsResponse{
 			ServerID:   uint(serverID),
 			ServerName: targetServer.Name,
 			Metrics:    metricData,
