@@ -61,6 +61,7 @@ jobs:
       - name: Ensure other dist directories have embeddable files
         run: |
           for dir in user-dist nazhua-dist nezha-ascii-dist; do
+            mkdir -p "cmd/dashboard/$dir"
             if [ ! -f "cmd/dashboard/$dir/.gitkeep" ]; then
               echo "placeholder" > "cmd/dashboard/$dir/.gitkeep"
             fi
