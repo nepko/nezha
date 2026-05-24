@@ -61,7 +61,7 @@ jobs:
       - name: Generate swagger docs
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest
-          swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
+          $(go env GOPATH)/bin/swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
 
       - name: Build dashboard (linux/amd64)
         env:
