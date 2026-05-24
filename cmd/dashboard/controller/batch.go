@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,22 +25,14 @@ import (
 // @Failure 400 {object} model.CommonResponse[any]
 // @Router /batch/servers [post]
 // @Security BearerAuth
-func BatchServerOperation(c *gin.Context) {
+func BatchServerOperation(c *gin.Context) (model.BatchOperationResponse, error) {
 	var req model.BatchOperationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, model.CommonResponse[any]{
-			Success: false,
-			Error:   "参数错误: " + err.Error(),
-		})
-		return
+		return model.BatchOperationResponse{}, &gin.Error{Err: err, Type: gin.ErrorTypeBind}
 	}
 
 	if len(req.ServerIDs) == 0 {
-		c.JSON(http.StatusBadRequest, model.CommonResponse[any]{
-			Success: false,
-			Error:   "未选择服务器",
-		})
-		return
+		return model.BatchOperationResponse{}, fmt.Errorf("服务器ID列表不能为空")
 	}
 
 	req.UserID = c.GetUint("user_id")
@@ -47,93 +40,78 @@ func BatchServerOperation(c *gin.Context) {
 	var results []model.ServerOperationResult
 	var successCount, failedCount int
 
-	// 获取所有选中的服务器
-	servers, err := singleton.ServerShared.GetSortedServerList(req.UserID, false)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, model.CommonResponse[any]{
-			Success: false,
-			Error:   "获取服务器列表失败",
-		})
-		return
-	}
-
-	// 过滤出选中的服务器
-	var selectedServers []*model.Server
-	for _, server := range servers {
-		for _, id := range req.ServerIDs {
-			if server.ID == id {
-				selectedServers = append(selectedServers, server)
-				break
-			}
-		}
-	}
+	// 获取所有服务器 map
+	serverMap := singleton.ServerShared.GetList()
 
 	// 执行批量操作
-	for _, server := range selectedServers {
-		result := model.ServerOperationResult{
-			ServerID:   server.ID,
-			ServerName: server.Name,
+	for _, id := range req.ServerIDs {
+		server, ok := serverMap[uint64(id)]
+		if ok {
+			result := model.ServerOperationResult{
+				ServerID:   id,
+				ServerName: server.Name,
+			}
+
+			switch req.Operation {
+			case "restart":
+				if server.TaskStream != nil {
+					task := &pb.Task{
+						Id:   uint64(time.Now().UnixNano()),
+						Type: model.TaskTypeCommand,
+						Data: "systemctl reboot",
+					}
+					server.TaskStream.Send(task)
+					result.Success = true
+					result.Message = "重启命令已发送"
+					successCount++
+				} else {
+					result.Success = false
+					result.Message = "服务器离线"
+					failedCount++
+				}
+
+			case "execute":
+				if server.TaskStream != nil && req.Command != "" {
+					task := &pb.Task{
+						Id:   uint64(time.Now().UnixNano()),
+						Type: model.TaskTypeCommand,
+						Data: req.Command,
+					}
+					server.TaskStream.Send(task)
+					result.Success = true
+					result.Message = "命令已发送: " + req.Command
+					successCount++
+				} else {
+					result.Success = false
+					result.Message = "服务器离线或命令为空"
+					failedCount++
+				}
+
+			case "shutdown":
+				if server.TaskStream != nil {
+					task := &pb.Task{
+						Id:   uint64(time.Now().UnixNano()),
+						Type: model.TaskTypeCommand,
+						Data: "systemctl poweroff",
+					}
+					server.TaskStream.Send(task)
+					result.Success = true
+					result.Message = "关机命令已发送"
+					successCount++
+				} else {
+					result.Success = false
+					result.Message = "服务器离线"
+					failedCount++
+				}
+
+			default:
+				result.Success = false
+				result.Message = "不支持的操作类型"
+				failedCount++
+			}
+
+			results = append(results, result)
 		}
-
-		switch req.Operation {
-		case "restart":
-			if server.TaskStream != nil {
-				task := &pb.Task{
-					Id:   uint64(time.Now().UnixNano()),
-					Type: model.TaskTypeCommand,
-					Data: "systemctl reboot",
-				}
-				server.TaskStream.Send(task)
-				result.Success = true
-				result.Message = "重启命令已发送"
-				successCount++
-			} else {
-				result.Success = false
-				result.Message = "服务器离线"
-				failedCount++
-			}
-
-		case "execute":
-			if server.TaskStream != nil && req.Command != "" {
-				task := &pb.Task{
-					Id:   uint64(time.Now().UnixNano()),
-					Type: model.TaskTypeCommand,
-					Data: req.Command,
-				}
-				server.TaskStream.Send(task)
-				result.Success = true
-				result.Message = "命令已发送: " + req.Command
-				successCount++
-			} else {
-				result.Success = false
-				result.Message = "服务器离线或命令为空"
-				failedCount++
-			}
-
-		case "shutdown":
-			if server.TaskStream != nil {
-				task := &pb.Task{
-					Id:   uint64(time.Now().UnixNano()),
-					Type: model.TaskTypeCommand,
-					Data: "systemctl poweroff",
-				}
-				server.TaskStream.Send(task)
-				result.Success = true
-				result.Message = "关机命令已发送"
-				successCount++
-			} else {
-				result.Success = false
-				result.Message = "服务器离线"
-				failedCount++
-			}
-
-		default:
-			result.Success = false
-			result.Message = "不支持的操作类型"
-			failedCount++
-		}
-
-		results = append(results, result)
 	}
 
 	// 保存操作历史
@@ -151,16 +129,13 @@ func BatchServerOperation(c *gin.Context) {
 	}
 	singleton.DB.Create(&history)
 
-	c.JSON(http.StatusOK, model.CommonResponse[model.BatchOperationResponse]{
-		Success: true,
-		Data: model.BatchOperationResponse{
-			TotalCount:   len(req.ServerIDs),
-			SuccessCount: successCount,
-			FailedCount:  failedCount,
-			Results:      results,
-			Operation:    req.Operation,
-		},
-	})
+	return model.BatchOperationResponse{
+		TotalCount:   len(req.ServerIDs),
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
+		Results:      results,
+		Operation:    req.Operation,
+	}, nil
 }
 
 // GetBatchOperationHistory 获取批量操作历史
@@ -173,7 +148,7 @@ func BatchServerOperation(c *gin.Context) {
 // @Success 200 {object} model.CommonResponse[model.BatchHistoryResponse]
 // @Router /batch/history [get]
 // @Security BearerAuth
-func GetBatchOperationHistory(c *gin.Context) {
+func GetBatchOperationHistory(c *gin.Context) (model.BatchHistoryResponse, error) {
 	userID := c.GetUint("user_id")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
@@ -194,15 +169,12 @@ func GetBatchOperationHistory(c *gin.Context) {
 	tx.Model(&model.BatchOperationHistory{}).Count(&total)
 	tx.Offset(offset).Limit(size).Find(&histories)
 
-	c.JSON(http.StatusOK, model.CommonResponse[model.BatchHistoryResponse]{
-		Success: true,
-		Data: model.BatchHistoryResponse{
-			Total:     total,
-			Page:      page,
-			PageSize:  size,
-			Histories: histories,
-		},
-	})
+	return model.BatchHistoryResponse{
+		Total:     total,
+		Page:      page,
+		PageSize:  size,
+		Histories: histories,
+	}, nil
 }
 
 // GetServerMetrics 获取服务器自定义监控指标
@@ -216,95 +188,70 @@ func GetBatchOperationHistory(c *gin.Context) {
 // @Success 200 {object} model.CommonResponse[model.BatchServerMetricsResponse]
 // @Router /batch/servers/{server_id}/metrics [get]
 // @Security BearerAuth
-func GetServerMetrics(c *gin.Context) {
+func GetServerMetrics(c *gin.Context) (model.BatchServerMetricsResponse, error) {
 	serverID, _ := strconv.ParseUint(c.Param("server_id"), 10, 32)
 	metrics := c.DefaultQuery("metrics", "disk_usage,memory_usage,cpu_usage")
 	period := c.DefaultQuery("period", "24h")
 
-	userID := c.GetUint("user_id")
-
-	servers, err := singleton.ServerShared.GetSortedServerList(userID, false)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, model.CommonResponse[any]{
-			Success: false,
-			Error:   "获取服务器列表失败",
-		})
-		return
-	}
-
-	var targetServer *model.Server
-	for _, server := range servers {
-		if server.ID == uint(serverID) {
-			targetServer = server
-			break
-		}
-	}
-
-	if targetServer == nil {
-		c.JSON(http.StatusNotFound, model.CommonResponse[any]{
-			Success: false,
-			Error:   "服务器不存在或无权访问",
-		})
-		return
+	server, ok := singleton.ServerShared.Get(serverID)
+	if !ok {
+		return model.BatchServerMetricsResponse{}, fmt.Errorf("服务器不存在")
 	}
 
 	metricList := strings.Split(metrics, ",")
 	metricData := make(map[string]interface{})
 
-	if targetServer.State != nil {
+	if server.State != nil {
 		for _, metric := range metricList {
 			switch metric {
 			case "cpu_usage":
 				metricData["cpu_usage"] = gin.H{
-					"current": targetServer.State.CPU,
+					"current": server.State.CPU,
 					"unit":    "%",
 				}
 			case "memory_usage":
-				if targetServer.Host != nil {
-					memoryPercent := float64(targetServer.State.MemUsed) / float64(targetServer.Host.MemTotal) * 100
+				if server.Host != nil {
+					memoryPercent := float64(server.State.MemUsed) / float64(server.Host.MemTotal) * 100
 					metricData["memory_usage"] = gin.H{
 						"current": memoryPercent,
-						"used":    targetServer.State.MemUsed,
-						"total":   targetServer.Host.MemTotal,
+						"used":    server.State.MemUsed,
+						"total":   server.Host.MemTotal,
 						"unit":    "%",
 					}
 				}
 			case "disk_usage":
-				if targetServer.Host != nil {
-					diskPercent := float64(targetServer.State.DiskUsed) / float64(targetServer.Host.DiskTotal) * 100
+				if server.Host != nil {
+					diskPercent := float64(server.State.DiskUsed) / float64(server.Host.DiskTotal) * 100
 					metricData["disk_usage"] = gin.H{
 						"current": diskPercent,
-						"used":    targetServer.State.DiskUsed,
-						"total":   targetServer.Host.DiskTotal,
+						"used":    server.State.DiskUsed,
+						"total":   server.Host.DiskTotal,
 						"unit":    "%",
 					}
 				}
 			case "network_io":
 				metricData["network_io"] = gin.H{
-					"in_speed":  targetServer.State.NetInSpeed,
-					"out_speed": targetServer.State.NetOutSpeed,
-					"in_total":  targetServer.State.NetInTransfer,
-					"out_total": targetServer.State.NetOutTransfer,
+					"in_speed":  server.State.NetInSpeed,
+					"out_speed": server.State.NetOutSpeed,
+					"in_total":  server.State.NetInTransfer,
+					"out_total": server.State.NetOutTransfer,
 					"unit":      "bytes",
 				}
 			case "load":
 				metricData["load"] = gin.H{
-					"load1":  targetServer.State.Load1,
-					"load5":  targetServer.State.Load5,
-					"load15": targetServer.State.Load15,
+					"load1":  server.State.Load1,
+					"load5":  server.State.Load5,
+					"load15": server.State.Load15,
 				}
 			}
 		}
 	}
 
-	c.JSON(http.StatusOK, model.CommonResponse[model.BatchServerMetricsResponse]{
-		Success: true,
-		Data: model.BatchServerMetricsResponse{
-			ServerID:   uint(serverID),
-			ServerName: targetServer.Name,
-			Metrics:    metricData,
-			Period:     period,
-			Timestamp:  singleton.TimeNow().Unix(),
-		},
-	})
+	return model.BatchServerMetricsResponse{
+		ServerID:   uint(serverID),
+		ServerName: server.Name,
+		Metrics:    metricData,
+		Period:     period,
+		Timestamp:  time.Now().Unix(),
+	}, nil
 }
