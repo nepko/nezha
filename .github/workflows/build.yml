@@ -9,8 +9,6 @@ on:
 jobs:
   build-frontend:
     runs-on: ubuntu-latest
-    outputs:
-      dist-hash: ${{ steps.hash.outputs.hash }}
     steps:
       - name: Checkout admin-frontend fork
         uses: actions/checkout@v4
@@ -36,10 +34,6 @@ jobs:
           path: dist/
           retention-days: 1
 
-      - name: Hash
-        id: hash
-        run: echo "hash=$(find dist -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-
   build-backend:
     needs: build-frontend
     runs-on: ubuntu-latest
@@ -57,17 +51,6 @@ jobs:
         with:
           name: admin-dist
           path: cmd/dashboard/admin-dist/
-
-      - name: Ensure other dist directories have embeddable files
-        run: |
-          mkdir -p cmd/dashboard/nazhua-dist cmd/dashboard/nezha-ascii-dist
-          echo '<!DOCTYPE html><html><head></head><body>placeholder</body></html>' > cmd/dashboard/nazhua-dist/index.html
-          echo '<!DOCTYPE html><html><head></head><body>placeholder</body></html>' > cmd/dashboard/nezha-ascii-dist/index.html
-
-      - name: Generate swagger docs
-        run: |
-          go install github.com/swaggo/swag/cmd/swag@latest
-          $(go env GOPATH)/bin/swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
 
       - name: Build dashboard (linux/amd64)
         env:
