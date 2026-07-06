@@ -3,6 +3,7 @@ package controller
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/goccy/go-json"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+
+	"github.com/pquerna/otp/totp"
 
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/model"
@@ -24,6 +27,9 @@ const (
 	jwtClaimKeyID  = "keyId"
 	jwtKeyIDBytes  = 32
 )
+
+// ErrRequire2FA is returned when the user has 2FA enabled but didn't provide an OTP token.
+var ErrRequire2FA = errors.New("require_2fa")
 
 func uaHash(c *gin.Context) string {
 	sum := sha256.Sum256([]byte(c.Request.UserAgent()))
@@ -96,7 +102,7 @@ func initParams() *jwt.GinJWTMiddleware {
 		LoginResponse: func(c *gin.Context, code int, token string, expire time.Time) {
 			setCSRFCookie(c)
 			c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
-				Success: true,
+				Success: false,
 				Data: model.LoginResponse{
 					Token:  token,
 					Expire: expire.Format(time.RFC3339),
@@ -196,23 +202,39 @@ func authenticator() func(c *gin.Context) (any, error) {
 		if err := singleton.DB.Select("id", "password", "reject_password", "token_version").Where("username = ?", loginVals.Username).First(&user).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
 				model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, model.BlockIDUnknownUser)
+				singleton.WriteLoginAuditLog(c, loginVals.Username, 0, model.AuditActionLoginFailed, false)
 			}
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if user.RejectPassword {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
+			singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginVals.Password)); err != nil {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
+			singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		model.UnblockIP(singleton.DB, realip, model.BlockIDUnknownUser)
 		model.UnblockIP(singleton.DB, realip, int64(user.ID))
 
+		// Check if 2FA is enabled for this user
+		var otpSetting model.OTPSetting
+		if singleton.DB.First(&otpSetting, "user_id = ?", user.ID).Error == nil && otpSetting.Enabled {
+			if loginVals.OtpToken == "" {
+				return nil, ErrRequire2FA
+			}
+			if !totp.Validate(otpSetting.Secret, loginVals.OtpToken) {
+				singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
+				return nil, jwt.ErrFailedAuthentication
+			}
+		}
+
+		singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLogin, true)
 		return issueJWTSession(c, &user, singleton.Conf.JWTTimeout)
 	}
 }
@@ -226,6 +248,13 @@ func authorizator() func(data any, c *gin.Context) bool {
 
 func unauthorized() func(c *gin.Context, code int, message string) {
 	return func(c *gin.Context, code int, message string) {
+		if message == "require_2fa" {
+			c.JSON(http.StatusOK, model.CommonResponse[map[string]bool]{
+				Success: false,
+				Error:   "2FA_REQUIRED",
+			})
+			return
+		}
 		c.JSON(http.StatusOK, model.CommonResponse[any]{
 			Success: false,
 			Error:   "ApiErrorUnauthorized",
@@ -253,7 +282,7 @@ func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 	}
 	setCSRFCookie(c)
 	c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
-		Success: true,
+		Success: false,
 		Data: model.LoginResponse{
 			Token:  token,
 			Expire: expire.Format(time.RFC3339),

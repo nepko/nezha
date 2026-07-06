@@ -82,6 +82,8 @@ const (
 	ScopeTransferDelete = "nezha:transfer:delete"
 
 	ScopeAdminAll = "nezha:admin:*"
+	ScopeProfileRead   = "nezha:profile:read"
+	ScopeProfileWrite  = "nezha:profile:write"
 )
 
 var AllScopes = []string{
@@ -95,6 +97,7 @@ var AllScopes = []string{
 	ScopeNotificationRead, ScopeNotificationWrite, ScopeNotificationDelete,
 	ScopeNotificationGroupRead, ScopeNotificationGroupWrite, ScopeNotificationGroupDelete,
 	ScopeTransferRead, ScopeTransferWrite, ScopeTransferDelete,
+	ScopeProfileRead, ScopeProfileWrite,
 
 	"nezha:inventory:*",
 	"nezha:server:*",

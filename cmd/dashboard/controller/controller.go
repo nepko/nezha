@@ -107,6 +107,12 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/refresh-token", patForbidden, authMiddleware.RefreshHandler)
 	auth.GET("/profile", patForbidden, commonHandler(getProfile))
 	auth.POST("/profile", patForbidden, commonHandler(updateProfile))
+	auth.POST("/otp/setup", restScopeMiddleware(model.ScopeProfileWrite), commonHandler(setupOTP))
+	auth.POST("/otp/verify", restScopeMiddleware(model.ScopeProfileWrite), commonHandler(verifyOTP))
+	auth.POST("/otp/disable", restScopeMiddleware(model.ScopeProfileWrite), commonHandler(disableOTP))
+	auth.GET("/otp/backup-codes", restScopeMiddleware(model.ScopeProfileRead), commonHandler(getBackupCodes))
+	auth.GET("/otp/status", restScopeMiddleware(model.ScopeProfileRead), getOTPStatus)
+	auth.POST("/otp/backup-codes/regenerate", restScopeMiddleware(model.ScopeProfileWrite), commonHandler(regenerateBackupCodes))
 	auth.POST("/oauth2/:provider/unbind", patForbidden, commonHandler(unbindOauth2))
 	auth.GET("/api-tokens", patForbidden, commonHandler(listAPITokens))
 	auth.POST("/api-tokens", patForbidden, commonHandler(createAPIToken))
@@ -118,6 +124,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	//   - nezha:server:*    —— 对已知 server 的运行态操作（exec、文件读写、编辑配置、
 	//     force-update、batch-move）。
 	auth.POST("/terminal", restScopeMiddleware(model.ScopeServerExec), commonHandler(createTerminal))
+	auth.GET("/terminal/sessions", restScopeMiddleware(model.ScopeServerExec), commonHandler(listTerminalSessions))
 	auth.GET("/ws/terminal/:id", restScopeMiddleware(model.ScopeServerExec), commonHandler(terminalStream))
 	auth.POST("/file", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(createFM))
 	auth.GET("/ws/file/:id", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(fmStream))

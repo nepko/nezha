@@ -16,6 +16,7 @@ type Oauth2Callback struct {
 type LoginRequest struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+	OtpToken string `json:"otp_token,omitempty"`
 }
 
 type CommonResponse[T any] struct {

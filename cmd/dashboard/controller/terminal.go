@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,43 @@ import (
 	"github.com/nezhahq/nezha/service/rpc"
 	"github.com/nezhahq/nezha/service/singleton"
 )
+
+var terminalSessionStore = struct {
+	sync.RWMutex
+	sessions map[string]*model.TerminalSessionInfo
+}{sessions: make(map[string]*model.TerminalSessionInfo)}
+
+func recordTerminalSession(session *model.TerminalSessionInfo) {
+	terminalSessionStore.Lock()
+	defer terminalSessionStore.Unlock()
+	terminalSessionStore.sessions[session.SessionID] = session
+}
+
+func closeTerminalSession(sessionID string) {
+	terminalSessionStore.Lock()
+	defer terminalSessionStore.Unlock()
+	if session, ok := terminalSessionStore.sessions[sessionID]; ok {
+		session.Active = false
+		session.ClosedAt = time.Now().Unix()
+	}
+}
+
+func listTerminalSessions(c *gin.Context) ([]*model.TerminalSessionInfo, error) {
+	userID := getUid(c)
+	isAdmin := callerIsAdmin(c)
+	terminalSessionStore.RLock()
+	defer terminalSessionStore.RUnlock()
+
+	sessions := make([]*model.TerminalSessionInfo, 0, len(terminalSessionStore.sessions))
+	for _, session := range terminalSessionStore.sessions {
+		if !isAdmin && session.CreatorUserID != userID {
+			continue
+		}
+		copySession := *session
+		sessions = append(sessions, &copySession)
+	}
+	return sessions, nil
+}
 
 // Create web ssh terminal
 // @Summary Create web ssh terminal
@@ -47,9 +85,18 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 		return nil, err
 	}
 
-	if err := rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c), server.ID); err != nil {
+	creatorUserID := getUid(c)
+	if err := rpc.NezhaHandlerSingleton.CreateStream(streamId, creatorUserID, server.ID); err != nil {
 		return nil, err
 	}
+	recordTerminalSession(&model.TerminalSessionInfo{
+		SessionID:     streamId,
+		ServerID:      server.ID,
+		ServerName:    server.Name,
+		CreatorUserID: creatorUserID,
+		CreatedAt:     time.Now().Unix(),
+		Active:        true,
+	})
 
 	terminalData, _ := json.Marshal(&model.TerminalTask{
 		StreamID: streamId,
@@ -60,6 +107,8 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 	}); err != nil {
 		return nil, err
 	}
+
+	singleton.WriteAuditLog(c, model.AuditActionTerminalCreate, "server", server.ID, server.Name, true)
 
 	return &model.CreateTerminalResponse{
 		SessionID:  streamId,
@@ -87,6 +136,7 @@ func terminalStream(c *gin.Context) (any, error) {
 	if _, err := rpc.NezhaHandlerSingleton.GetStream(streamId); err != nil {
 		return nil, err
 	}
+	defer closeTerminalSession(streamId)
 	defer rpc.NezhaHandlerSingleton.CloseStream(streamId)
 
 	wsConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

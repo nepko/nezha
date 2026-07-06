@@ -84,6 +84,8 @@ type Config struct {
 	ForceAuth      bool   `koanf:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
 	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
 	JWTTimeout     int    `koanf:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
+	PasswordMinLen          int  `koanf:"password_min_len" json:"password_min_len,omitempty"`
+	PasswordRequireComplex bool `koanf:"password_require_complex" json:"password_require_complex,omitempty"`
 
 	JWTSecretKey                   string `koanf:"jwt_secret_key" json:"-" yaml:"-"`
 	JWTSecretKeyLastRotatedVersion string `koanf:"jwt_secret_key_last_rotated_version" json:"jwt_secret_key_last_rotated_version,omitempty"`
@@ -193,6 +195,9 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 	if c.Cover == 0 {
 		c.Cover = 1
+	}
+	if c.PasswordMinLen == 0 {
+		c.PasswordMinLen = 8
 	}
 	if envSecret := os.Getenv(JWTSecretEnvKey); envSecret != "" {
 		c.JWTSecretKey = envSecret

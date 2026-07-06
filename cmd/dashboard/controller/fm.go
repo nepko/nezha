@@ -63,6 +63,8 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 		return nil, err
 	}
 
+	singleton.WriteAuditLog(c, model.AuditActionFMCreate, "server", id, "", true)
+
 	return &model.CreateFMResponse{
 		SessionID: streamId,
 	}, nil

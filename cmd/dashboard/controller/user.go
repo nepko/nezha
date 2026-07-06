@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"slices"
 	"strconv"
 
@@ -11,6 +12,43 @@ import (
 	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
 )
+
+func validatePasswordPolicy(password string) error {
+	if password == "" {
+		return nil
+	}
+	minLen := 8
+	requireComplex := false
+	if singleton.Conf != nil {
+		if singleton.Conf.PasswordMinLen > 0 {
+			minLen = singleton.Conf.PasswordMinLen
+		}
+		requireComplex = singleton.Conf.PasswordRequireComplex
+	}
+	if minLen > 0 && len(password) < minLen {
+		return errors.New("password too short")
+	}
+	if !requireComplex {
+		return nil
+	}
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, c := range password {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= 'a' && c <= 'z':
+			hasLower = true
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		default:
+			hasSpecial = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasDigit || !hasSpecial {
+		return errors.New("password too simple, require upper, lower, digit and special char")
+	}
+	return nil
+}
 
 // Get profile
 // @Summary Get profile
@@ -68,6 +106,9 @@ func updateProfile(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("incorrect password")
 	}
 
+	if err := validatePasswordPolicy(pf.NewPassword); err != nil {
+		return nil, err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(pf.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
