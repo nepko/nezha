@@ -167,6 +167,13 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/command-approval/:id/approve", restScopeMiddleware(model.ScopeAdminAll), commonHandler(approveCommandApproval))
 	auth.POST("/command-approval/:id/reject", restScopeMiddleware(model.ScopeAdminAll), commonHandler(rejectCommandApproval))
 
+	// 二开：登录暴力破解防护（安全设置 + 锁定/IP 封禁管理）
+	auth.GET("/security/login-protection", restScopeMiddleware(model.ScopeAdminAll), commonHandler(getLoginProtection))
+	auth.POST("/security/login-protection", restScopeMiddleware(model.ScopeAdminAll), commonHandler(updateLoginProtection))
+	auth.GET("/security/locks", restScopeMiddleware(model.ScopeAdminAll), commonHandler(listLoginLocks))
+	auth.POST("/security/locks/unlock", restScopeMiddleware(model.ScopeAdminAll), commonHandler(unlockAccount))
+	auth.POST("/security/locks/unban", restScopeMiddleware(model.ScopeAdminAll), commonHandler(unbanIP))
+
 	// transfer — 严格使用 nezha:transfer 资源族 scope（read/write/delete）。
 	// 注意：曾经计划让 nezha:server:read 兼听只读 transfer，但 restScopeMiddleware
 	// / APIToken.HasScope 不做 server↔transfer 别名展开，前端 SCOPE_OPTIONS 也已经
