@@ -29,6 +29,10 @@ type User struct {
 	AgentSecret    string `json:"agent_secret,omitempty" gorm:"type:char(32)"`
 	RejectPassword bool   `json:"reject_password,omitempty"`
 	TokenVersion   uint64 `json:"-" gorm:"not null;default:0"`
+
+	// 二开：登录暴力破解防护
+	LoginFails  int   `json:"-" gorm:"not null;default:0"` // 连续登录失败次数
+	LockedUntil int64 `json:"-" gorm:"not null;default:0"` // 账号锁定截止 Unix 秒，0 表示未锁定
 }
 
 type UserInfo struct {

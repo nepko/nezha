@@ -31,6 +31,45 @@ const (
 // ErrRequire2FA is returned when the user has 2FA enabled but didn't provide an OTP token.
 var ErrRequire2FA = errors.New("require_2fa")
 
+// ErrAccountLocked is returned when the account is temporarily locked by the
+// brute-force protector. The remaining lock time is carried via the gin context
+// (model.CtxKeyLoginBlocked) since gin-jwt only forwards the error string.
+var ErrAccountLocked = errors.New("account_locked")
+
+// recordFailedLogin 累计账号失败次数并在达到阈值时锁定账号，同时累计 IP 失败次数。
+func recordFailedLogin(uid uint64, ip string) {
+	if !singleton.Conf.LoginProtectEnabled {
+		return
+	}
+	if uid != 0 {
+		_ = singleton.DB.Model(&model.User{}).Where("id = ?", uid).
+			Update("login_fails", gorm.Expr("login_fails + 1")).Error
+		var u model.User
+		if singleton.DB.Select("login_fails").First(&u, uid).Error == nil &&
+			singleton.Conf.LoginMaxAttempts > 0 &&
+			u.LoginFails >= singleton.Conf.LoginMaxAttempts {
+			_ = singleton.DB.Model(&model.User{}).Where("id = ?", uid).
+				Updates(map[string]interface{}{
+					"login_fails":  0,
+					"locked_until": time.Now().Unix() + int64(singleton.Conf.LoginLockMinutes)*60,
+				}).Error
+		}
+	}
+	singleton.RecordIPLoginFailure(ip)
+}
+
+// resetLoginFails 登录成功后清空账号失败计数并解除 IP 封禁计数。
+func resetLoginFails(uid uint64, ip string) {
+	if !singleton.Conf.LoginProtectEnabled {
+		return
+	}
+	if uid != 0 {
+		_ = singleton.DB.Model(&model.User{}).Where("id = ?", uid).
+			Updates(map[string]interface{}{"login_fails": 0, "locked_until": 0}).Error
+	}
+	singleton.ClearIPBan(ip)
+}
+
 func uaHash(c *gin.Context) string {
 	sum := sha256.Sum256([]byte(c.Request.UserAgent()))
 	return hex.EncodeToString(sum[:])
@@ -199,23 +238,38 @@ func authenticator() func(c *gin.Context) (any, error) {
 		var user model.User
 		realip := c.GetString(model.CtxKeyRealIPStr)
 
-		if err := singleton.DB.Select("id", "password", "reject_password", "token_version").Where("username = ?", loginVals.Username).First(&user).Error; err != nil {
+		if err := singleton.DB.Select("id", "password", "reject_password", "token_version", "locked_until").Where("username = ?", loginVals.Username).First(&user).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
 				model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, model.BlockIDUnknownUser)
 				singleton.WriteLoginAuditLog(c, loginVals.Username, 0, model.AuditActionLoginFailed, false)
+				recordFailedLogin(0, realip)
 			}
 			return nil, jwt.ErrFailedAuthentication
+		}
+
+		// 二开：账号被暴力破解防护锁定
+		if singleton.Conf.LoginProtectEnabled && user.LockedUntil > time.Now().Unix() {
+			remaining := user.LockedUntil - time.Now().Unix()
+			c.Set(model.CtxKeyLoginBlocked, model.LoginBlockedInfo{
+				Type:      "account_locked",
+				Remaining: remaining,
+				Message:   singleton.Localizer.T("login locked"),
+			})
+			singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginBlocked, false)
+			return nil, ErrAccountLocked
 		}
 
 		if user.RejectPassword {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
 			singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
+			recordFailedLogin(user.ID, realip)
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginVals.Password)); err != nil {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
 			singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
+			recordFailedLogin(user.ID, realip)
 			return nil, jwt.ErrFailedAuthentication
 		}
 
@@ -230,10 +284,12 @@ func authenticator() func(c *gin.Context) (any, error) {
 			}
 			if !totp.Validate(otpSetting.Secret, loginVals.OtpToken) {
 				singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
+				recordFailedLogin(user.ID, realip)
 				return nil, jwt.ErrFailedAuthentication
 			}
 		}
 
+		resetLoginFails(user.ID, realip)
 		singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLogin, true)
 		return issueJWTSession(c, &user, singleton.Conf.JWTTimeout)
 	}
@@ -252,6 +308,25 @@ func unauthorized() func(c *gin.Context, code int, message string) {
 			c.JSON(http.StatusOK, model.CommonResponse[map[string]bool]{
 				Success: false,
 				Error:   "2FA_REQUIRED",
+			})
+			return
+		}
+		// 二开：账号锁定 / IP 封禁 / CIDR 拒绝，携带剩余时间供前端倒计时
+		if message == "account_locked" {
+			if v, ok := c.Get(model.CtxKeyLoginBlocked); ok {
+				if info, ok := v.(model.LoginBlockedInfo); ok {
+					c.JSON(http.StatusOK, model.CommonResponse[model.LoginBlockedInfo]{
+						Success: false,
+						Error:   "LOGIN_BLOCKED",
+						Data:    info,
+					})
+					return
+				}
+			}
+			c.JSON(http.StatusOK, model.CommonResponse[model.LoginBlockedInfo]{
+				Success: false,
+				Error:   "LOGIN_BLOCKED",
+				Data:    model.LoginBlockedInfo{Type: "account_locked", Remaining: 0, Message: ""},
 			})
 			return
 		}

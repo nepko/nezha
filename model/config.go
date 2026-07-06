@@ -92,6 +92,14 @@ type Config struct {
 	ListenPort                     uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
 	ListenHost                     string `koanf:"listen_host" json:"listen_host,omitempty"`
 
+	// 二开：登录暴力破解防护（默认关闭，开启后按阈值锁定账号/封禁 IP）
+	LoginProtectEnabled  bool   `koanf:"login_protect_enabled" json:"login_protect_enabled,omitempty"`
+	LoginMaxAttempts     int    `koanf:"login_max_attempts" json:"login_max_attempts,omitempty"`         // 连续失败达到此值锁定账号
+	LoginLockMinutes     int    `koanf:"login_lock_minutes" json:"login_lock_minutes,omitempty"`         // 账号锁定分钟数
+	LoginBanIPThreshold  int    `koanf:"login_ban_ip_threshold" json:"login_ban_ip_threshold,omitempty"` // 同 IP 失败达到此值封禁
+	LoginBanMinutes      int    `koanf:"login_ban_minutes" json:"login_ban_minutes,omitempty"`           // IP 封禁分钟数
+	AllowedLoginCIDRs    string `koanf:"allowed_login_cidrs" json:"allowed_login_cidrs,omitempty"`       // 允许登录的 CIDR，逗号分隔，空=不限制
+
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
 
@@ -223,6 +231,20 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	// Add JWTTimeout default check
 	if c.JWTTimeout == 0 {
 		c.JWTTimeout = 1
+	}
+
+	// 登录暴力破解防护默认值（仅在 LoginProtectEnabled=true 时生效）
+	if c.LoginMaxAttempts == 0 {
+		c.LoginMaxAttempts = 5
+	}
+	if c.LoginLockMinutes == 0 {
+		c.LoginLockMinutes = 15
+	}
+	if c.LoginBanIPThreshold == 0 {
+		c.LoginBanIPThreshold = 10
+	}
+	if c.LoginBanMinutes == 0 {
+		c.LoginBanMinutes = 60
 	}
 
 	if c.AgentSecretKey == "" {

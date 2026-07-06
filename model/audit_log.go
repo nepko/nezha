@@ -5,6 +5,7 @@ package model
 const (
 	AuditActionLogin         = "login"
 	AuditActionLoginFailed   = "login_failed"
+	AuditActionLoginBlocked  = "login_blocked"
 	AuditActionLogout        = "logout"
 	AuditActionConfigUpdate  = "config_update"
 	AuditActionUserCreate   = "user_create"
