@@ -41,6 +41,8 @@ func ServeWeb(frontendDist fs.FS) http.Handler {
 	r.Use(waf.RealIp)
 	r.Use(waf.Waf)
 	r.Use(recordPath)
+	// 静态资源与 API 响应按 Accept-Encoding 流式 gzip 压缩，减小传输体积。
+	r.Use(gzipMiddleware())
 
 	routers(r, frontendDist)
 
