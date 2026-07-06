@@ -26,6 +26,8 @@ type SettingForm struct {
 	TerminalRecordingRetentionDays *int  `json:"terminal_recording_retention_days,omitempty" validate:"optional"`
 	// 二开：文件管理器增强开关（默认关闭）。
 	FMEnhancedEnabled *bool `json:"fm_enhanced_enabled,omitempty" validate:"optional"`
+	// 二开：终端空闲超时（秒，0=不限制）。
+	TerminalIdleTimeoutSeconds *int `json:"terminal_idle_timeout_seconds,omitempty" validate:"optional"`
 }
 
 type Setting struct {
@@ -34,6 +36,12 @@ type Setting struct {
 
 	IgnoredIPNotificationServerIDs map[uint64]bool `json:"ignored_ip_notification_server_ids,omitempty"`
 	Oauth2Providers                []string        `json:"oauth2_providers,omitempty"`
+
+	// 二开：终端与文件管理器增强开关（仅序列化到前端设置页，不参与 Config 嵌套）
+	TerminalRecordingEnabled       bool `json:"terminal_recording_enabled,omitempty" gorm:"-"`
+	TerminalRecordingRetentionDays int  `json:"terminal_recording_retention_days,omitempty" gorm:"-"`
+	TerminalIdleTimeoutSeconds     int  `json:"terminal_idle_timeout_seconds,omitempty" gorm:"-"`
+	FMEnhancedEnabled              bool `json:"fm_enhanced_enabled,omitempty" gorm:"-"`
 }
 
 type FrontendTemplate struct {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nezhahq/nezha/model"
@@ -38,6 +39,22 @@ type ioStreamContext struct {
 	revokedOnce      sync.Once
 	// recordable 标记该流为终端会话、允许在 StartStream 中按配置录制。
 	recordable bool
+	// lastActive 最近一次用户输入时间戳（Unix 秒），用于空闲超时断开。
+	lastActive int64
+}
+
+// activityReader 包装用户输入流，每次成功读取都刷新 lastActive，用于空闲超时判定。
+type activityReader struct {
+	r    io.Reader
+	mark func()
+}
+
+func (a *activityReader) Read(p []byte) (int, error) {
+	n, err := a.r.Read(p)
+	if n > 0 {
+		a.mark()
+	}
+	return n, err
 }
 
 type bp struct {
@@ -77,6 +94,21 @@ func (s *NezhaHandler) MarkRecording(streamId string, on bool) error {
 	}
 	stream.recordable = on
 	return nil
+}
+
+// StreamIdleSeconds 返回某流自最近一次用户输入以来的空闲秒数；流不存在返回 -1。
+func (s *NezhaHandler) StreamIdleSeconds(streamId string) int64 {
+	s.ioStreamMutex.RLock()
+	stream, ok := s.ioStreams[streamId]
+	s.ioStreamMutex.RUnlock()
+	if !ok {
+		return -1
+	}
+	last := atomic.LoadInt64(&stream.lastActive)
+	if last == 0 {
+		return 0
+	}
+	return time.Now().Unix() - last
 }
 
 func (s *NezhaHandler) CreateStreamWithPurpose(streamId string, creatorUserID uint64, targetServerID uint64, purpose StreamPurpose) error {
@@ -424,6 +456,17 @@ LOOP:
 		src := io.Reader(userIo)
 		if recorder != nil {
 			src = io.TeeReader(userIo, &recordingWriter{rec: recorder, direction: model.RecordingDirectionInput})
+		}
+		// 二开：空闲超时跟踪——仅用户输入刷新活跃时间（叠加在录制 reader 之上）。
+		idleTimeout := int64(0)
+		if singleton.Conf != nil {
+			idleTimeout = int64(singleton.Conf.TerminalIdleTimeoutSeconds)
+		}
+		if idleTimeout > 0 {
+			base := src
+			src = &activityReader{r: base, mark: func() {
+				atomic.StoreInt64(&stream.lastActive, time.Now().Unix())
+			}}
 		}
 		_, innerErr := io.CopyBuffer(agentIo, src, bp.buf)
 		errCh <- innerErr

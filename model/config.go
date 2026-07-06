@@ -108,6 +108,9 @@ type Config struct {
 	// 仅控制前端增强操作入口；真实磁盘操作依赖外部 nezhahq/agent 实现对应 op，默认关闭。
 	FMEnhancedEnabled bool `koanf:"fm_enhanced_enabled" json:"fm_enhanced_enabled,omitempty"`
 
+	// 二开：终端空闲超时自动断开（秒），0 表示不限制。
+	TerminalIdleTimeoutSeconds int `koanf:"terminal_idle_timeout_seconds" json:"terminal_idle_timeout_seconds,omitempty"`
+
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
 

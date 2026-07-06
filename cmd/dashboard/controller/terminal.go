@@ -146,6 +146,25 @@ func terminalStream(c *gin.Context) (any, error) {
 	defer wsConn.Close()
 	conn := websocketx.NewConn(wsConn)
 
+	// 二开：终端空闲超时自动断开。仅统计用户输入活跃度，超时则关闭连接。
+	if singleton.Conf != nil && singleton.Conf.TerminalIdleTimeoutSeconds > 0 {
+		timeout := time.Duration(singleton.Conf.TerminalIdleTimeoutSeconds) * time.Second
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				idle := rpc.NezhaHandlerSingleton.StreamIdleSeconds(streamId)
+				if idle < 0 {
+					return // 流已结束
+				}
+				if idle >= int64(timeout.Seconds()) {
+					_ = wsConn.Close()
+					return
+				}
+			}
+		}()
+	}
+
 	deregisterPAT := registerPATConnection(c, func() { _ = wsConn.Close() })
 	defer deregisterPAT()
 

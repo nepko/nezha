@@ -51,15 +51,19 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 			configDashboard.AgentTLS = singleton.Conf.AgentTLS
 			configDashboard.InstallHost = singleton.Conf.InstallHost
 		}
-		conf = model.SettingResponse{
-			Config: model.Setting{
-				ConfigForGuests: configForGuests,
-				ConfigDashboard: configDashboard,
-				Oauth2Providers: config.Oauth2Providers,
-			},
-			TSDBEnabled: singleton.TSDBEnabled(),
-		}
+	conf = model.SettingResponse{
+		Config: model.Setting{
+			ConfigForGuests: configForGuests,
+			ConfigDashboard: configDashboard,
+			Oauth2Providers: config.Oauth2Providers,
+			TerminalRecordingEnabled:       singleton.Conf.TerminalRecordingEnabled,
+			TerminalRecordingRetentionDays: singleton.Conf.TerminalRecordingRetentionDays,
+			TerminalIdleTimeoutSeconds:     singleton.Conf.TerminalIdleTimeoutSeconds,
+			FMEnhancedEnabled:              singleton.Conf.FMEnhancedEnabled,
+		},
+		TSDBEnabled: singleton.TSDBEnabled(),
 	}
+}
 
 	return &conf, nil
 }
@@ -119,6 +123,9 @@ func updateConfig(c *gin.Context) (any, error) {
 	}
 	if sf.FMEnhancedEnabled != nil {
 		singleton.Conf.FMEnhancedEnabled = *sf.FMEnhancedEnabled
+	}
+	if sf.TerminalIdleTimeoutSeconds != nil {
+		singleton.Conf.TerminalIdleTimeoutSeconds = *sf.TerminalIdleTimeoutSeconds
 	}
 	mcpWasEnabled := singleton.Conf.MCPEnabled()
 	mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
