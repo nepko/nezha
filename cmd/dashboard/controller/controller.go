@@ -139,6 +139,24 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.PATCH("/server-group/:id", restScopeMiddleware(model.ScopeServerWrite), commonHandler(updateServerGroup))
 	auth.POST("/batch-delete/server-group", restScopeMiddleware(model.ScopeInventoryDelete), commonHandler(batchDeleteServerGroup))
 
+	// 二开：批量操作 / 快捷命令 / 命令历史 / 命令策略（移植自 feature/terminal-enhancement）
+	auth.POST("/batch/servers", commonHandler(BatchServerOperation))
+	auth.GET("/batch/history", commonHandler(GetBatchOperationHistory))
+	auth.GET("/batch/servers/:server_id/metrics", commonHandler(GetServerMetrics))
+	auth.GET("/quick-command", listHandler(listQuickCommands))
+	auth.POST("/quick-command", commonHandler(createQuickCommand))
+	auth.PATCH("/quick-command/:id", commonHandler(updateQuickCommand))
+	auth.DELETE("/quick-command/:id", commonHandler(deleteQuickCommand))
+	auth.POST("/batch-delete/quick-command", commonHandler(batchDeleteQuickCommand))
+	auth.POST("/quick-command/execute", commonHandler(executeBatchCommand))
+	auth.GET("/command-history", listHandler(listCommandHistory))
+	auth.POST("/command-history", commonHandler(addCommandHistory))
+	auth.GET("/command-policy", listHandler(listCommandPolicies))
+	auth.POST("/command-policy", commonHandler(createCommandPolicy))
+	auth.PATCH("/command-policy/:id", commonHandler(updateCommandPolicy))
+	auth.DELETE("/command-policy/:id", commonHandler(deleteCommandPolicy))
+	auth.POST("/batch-delete/command-policy", commonHandler(batchDeleteCommandPolicy))
+
 	// transfer — 严格使用 nezha:transfer 资源族 scope（read/write/delete）。
 	// 注意：曾经计划让 nezha:server:read 兼听只读 transfer，但 restScopeMiddleware
 	// / APIToken.HasScope 不做 server↔transfer 别名展开，前端 SCOPE_OPTIONS 也已经
