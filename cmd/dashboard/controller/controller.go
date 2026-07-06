@@ -157,6 +157,11 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.DELETE("/command-policy/:id", commonHandler(deleteCommandPolicy))
 	auth.POST("/batch-delete/command-policy", commonHandler(batchDeleteCommandPolicy))
 
+	// 二开：命令审批流（高危命令需管理员审批后下发）
+	auth.GET("/command-approval", restScopeMiddleware(model.ScopeAdminAll), commonHandler(listCommandApprovals))
+	auth.POST("/command-approval/:id/approve", restScopeMiddleware(model.ScopeAdminAll), commonHandler(approveCommandApproval))
+	auth.POST("/command-approval/:id/reject", restScopeMiddleware(model.ScopeAdminAll), commonHandler(rejectCommandApproval))
+
 	// transfer — 严格使用 nezha:transfer 资源族 scope（read/write/delete）。
 	// 注意：曾经计划让 nezha:server:read 兼听只读 transfer，但 restScopeMiddleware
 	// / APIToken.HasScope 不做 server↔transfer 别名展开，前端 SCOPE_OPTIONS 也已经
@@ -454,6 +459,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		// 新增前端路由时必须在 admin-frontend/src/main.tsx 与这里同步加。
 		regexp.MustCompile(`^/dashboard/transfer$`),
 		regexp.MustCompile(`^/dashboard/security$`),
+		regexp.MustCompile(`^/dashboard/command-policy$`),
 	}
 
 	getFallbackStatusCode := func(path string) int {

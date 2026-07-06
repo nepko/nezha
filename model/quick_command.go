@@ -117,8 +117,9 @@ type CommandPolicy struct {
 	Name      string `json:"name"`
 	Type      uint8  `json:"type"` // 1=whitelist, 2=blacklist
 	Commands  string `json:"commands" gorm:"type:text"` // JSON array of regex patterns
-	CommandsRaw string `gorm:"-" json:"-"`
+	CommandsRaw string `gorm:"-" json:"commands_raw,omitempty"`
 	Enabled   bool   `json:"enabled"`
+	RequireApproval bool `json:"require_approval"` // 命中后进入审批流而非直接拒绝
 }
 
 func (cp *CommandPolicy) BeforeSave(tx *gorm.DB) error {
@@ -140,4 +141,22 @@ func (cp *CommandPolicy) AfterFind(tx *gorm.DB) error {
 const (
 	CommandPolicyWhitelist = 1
 	CommandPolicyBlacklist = 2
+)
+
+// CommandApproval 高危命令审批单
+type CommandApproval struct {
+	Common
+	Command   string `json:"command" gorm:"type:text"`
+	UserID    uint64 `json:"user_id"`
+	Username  string `json:"username"`
+	ServerIDs string `json:"server_ids" gorm:"type:text"` // JSON 数组
+	Status    uint8  `json:"status"` // 1=pending 2=approved 3=rejected
+	Approver  uint64 `json:"approver,omitempty"`
+	Reason    string `json:"reason,omitempty" gorm:"type:text"`
+}
+
+const (
+	CommandApprovalPending  = 1
+	CommandApprovalApproved = 2
+	CommandApprovalRejected = 3
 )

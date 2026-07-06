@@ -97,7 +97,8 @@ func InitDBFromPath(path string) error {
 		model.WAF{}, model.Oauth2Bind{}, model.ServerTransfer{}, model.JWTSession{},
 		model.APIToken{}, model.MCPAuditLog{},
 		model.BatchOperationHistory{}, model.CustomMetric{},
-		model.QuickCommand{}, model.CommandHistory{}, model.CommandPolicy{})
+		model.QuickCommand{}, model.CommandHistory{}, model.CommandPolicy{}, model.CommandApproval{},
+		model.TerminalSession{}, model.TerminalSessionEvent{})
 	if err != nil {
 		return err
 	}

@@ -36,6 +36,27 @@ func BatchServerOperation(c *gin.Context) (model.BatchOperationResponse, error) 
 
 	req.UserID = c.GetUint("user_id")
 
+	// 命令策略校验（仅对 execute 自定义命令生效）
+	var policyDecision CommandPolicyDecision
+	needCheck := req.Operation == "execute" && req.Command != ""
+	if needCheck {
+		d, e := evaluateCommandPolicy(req.Command)
+		if e != nil {
+			return model.BatchOperationResponse{}, e
+		}
+		policyDecision = d
+		if d.NeedsApproval {
+			var u model.User
+			uname := ""
+			if singleton.DB.First(&u, req.UserID).Error == nil {
+				uname = u.Username
+			}
+			if _, e2 := createCommandApproval(req.Command, uint64(req.UserID), uname, toUint64IDs(req.ServerIDs)); e2 != nil {
+				return model.BatchOperationResponse{}, e2
+			}
+		}
+	}
+
 	var results []model.ServerOperationResult
 	var successCount, failedCount int
 
@@ -70,7 +91,15 @@ func BatchServerOperation(c *gin.Context) (model.BatchOperationResponse, error) 
 				}
 
 			case "execute":
-				if server.GetTaskStream() != nil && req.Command != "" {
+				if policyDecision.Blocked {
+					result.Success = false
+					result.Message = policyDecision.Reason
+					failedCount++
+				} else if policyDecision.NeedsApproval {
+					result.Success = false
+					result.Message = "命令待审批"
+					failedCount++
+				} else if server.GetTaskStream() != nil && req.Command != "" {
 					task := &pb.Task{
 						Id:   uint64(time.Now().UnixNano()),
 						Type: model.TaskTypeCommand,

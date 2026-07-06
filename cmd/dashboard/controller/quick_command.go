@@ -88,22 +88,28 @@ func batchDeleteQuickCommand(c *gin.Context) (*model.CommonResponse[any], error)
 	}, nil
 }
 
-// ExecuteBatchCommand 批量执行命令
-func executeBatchCommand(c *gin.Context) (*model.CommonResponse[[]*model.BatchCommandResult], error) {
+// ExecuteBatchCommand 批量执行命令（含命令策略校验与审批）
+func executeBatchCommand(c *gin.Context) (*model.CommonResponse[any], error) {
 	var req model.BatchCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return nil, err
 	}
 
-	serverList := singleton.ServerShared.GetSortedList()
-	results := make([]*model.BatchCommandResult, 0)
+	var uid uint64
+	var uname string
+	if auth, ok := c.Get(model.CtxKeyAuthorizedUser); ok {
+		if u, ok := auth.(*model.User); ok {
+			uid = u.ID
+			uname = u.Username
+		}
+	}
 
+	serverList := singleton.ServerShared.GetSortedList()
+	targetIDs := make([]uint64, 0)
 	for _, server := range serverList {
 		if server == nil || server.GetTaskStream() == nil {
 			continue
 		}
-
-		// 如果指定了服务器列表，只执行指定的
 		if len(req.Servers) > 0 {
 			found := false
 			for _, sid := range req.Servers {
@@ -116,7 +122,52 @@ func executeBatchCommand(c *gin.Context) (*model.CommonResponse[[]*model.BatchCo
 				continue
 			}
 		}
+		if !server.HasPermission(c) {
+			continue
+		}
+		targetIDs = append(targetIDs, server.ID)
+	}
 
+	// 命令策略校验
+	decision, err := evaluateCommandPolicy(req.Command)
+	if err != nil {
+		return nil, err
+	}
+	if decision.Blocked {
+		return nil, newGormError(decision.Reason)
+	}
+	if decision.NeedsApproval {
+		approval, err := createCommandApproval(req.Command, uid, uname, targetIDs)
+		if err != nil {
+			return nil, err
+		}
+		return &model.CommonResponse[any]{
+			Success: true,
+			Data: gin.H{
+				"status":      "pending",
+				"approval_id": approval.ID,
+				"reason":      decision.Reason,
+			},
+		}, nil
+	}
+
+	results := make([]*model.BatchCommandResult, 0)
+	for _, server := range serverList {
+		if server == nil || server.GetTaskStream() == nil {
+			continue
+		}
+		if len(req.Servers) > 0 {
+			found := false
+			for _, sid := range req.Servers {
+				if server.ID == sid {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
 		if !server.HasPermission(c) {
 			continue
 		}
@@ -146,7 +197,7 @@ func executeBatchCommand(c *gin.Context) (*model.CommonResponse[[]*model.BatchCo
 		results = append(results, result)
 	}
 
-	return &model.CommonResponse[[]*model.BatchCommandResult]{
+	return &model.CommonResponse[any]{
 		Success: true,
 		Data:    results,
 	}, nil
