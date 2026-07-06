@@ -163,9 +163,74 @@ func terminalStream(c *gin.Context) (any, error) {
 		return nil, newWsError("%v", err)
 	}
 
+	// 二开：标记该流为终端会话，允许 StartStream 在配置开启时录制双向字节流。
+	_ = rpc.NezhaHandlerSingleton.MarkRecording(streamId, true)
+
 	if err = rpc.NezhaHandlerSingleton.StartStream(streamId, time.Second*10); err != nil {
 		return nil, newWsError("%v", err)
 	}
 
 	return nil, newWsError("")
+}
+
+// listTerminalRecordings 列出已录制会话（聚合元信息），供回放审计页查询。
+// @Summary List terminal recordings
+// @Tags auth required
+// @Success 200 {object} model.CommonResponse[[]model.RecordingSessionMeta]
+// @Router /terminal/recordings [get]
+func listTerminalRecordings(c *gin.Context) ([]*model.RecordingSessionMeta, error) {
+	if !callerIsAdmin(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
+	type sessAgg struct {
+		SessionID string
+		ServerID  uint64
+		Chunks    int64
+		StartTs   int64
+		EndTs     int64
+	}
+	var aggs []sessAgg
+	if err := singleton.DB.Model(&model.TerminalRecordingChunk{}).
+		Select("session_id, MAX(server_id) as server_id, COUNT(*) as chunks, MIN(ts) as start_ts, MAX(ts) as end_ts").
+		Group("session_id").
+		Order("end_ts desc").
+		Scan(&aggs).Error; err != nil {
+		return nil, err
+	}
+
+	result := make([]*model.RecordingSessionMeta, 0, len(aggs))
+	for _, a := range aggs {
+		name := ""
+		if s, ok := singleton.ServerShared.Get(a.ServerID); ok {
+			name = s.Name
+		}
+		result = append(result, &model.RecordingSessionMeta{
+			SessionID:  a.SessionID,
+			ServerID:   a.ServerID,
+			ServerName: name,
+			Chunks:     a.Chunks,
+			StartTs:    a.StartTs,
+			EndTs:      a.EndTs,
+		})
+	}
+	return result, nil
+}
+
+// getTerminalRecording 返回某会话的全部录制分块（按 seq 顺序），供前端回放。
+// @Summary Get terminal recording chunks
+// @Tags auth required
+// @Param id path string true "Session UUID"
+// @Success 200 {object} model.CommonResponse[[]model.TerminalRecordingChunk]
+// @Router /terminal/recordings/{id} [get]
+func getTerminalRecording(c *gin.Context) ([]*model.TerminalRecordingChunk, error) {
+	if !callerIsAdmin(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+	sessionID := c.Param("id")
+	var chunks []*model.TerminalRecordingChunk
+	if err := singleton.DB.Where("session_id = ?", sessionID).Order("seq asc").Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
 }

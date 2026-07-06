@@ -111,6 +111,12 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.Conf.AgentRealIPHeader = sf.AgentRealIPHeader
 	singleton.Conf.AgentTLS = sf.AgentTLS
 	singleton.Conf.UserTemplate = sf.UserTemplate
+	if sf.TerminalRecordingEnabled != nil {
+		singleton.Conf.TerminalRecordingEnabled = *sf.TerminalRecordingEnabled
+	}
+	if sf.TerminalRecordingRetentionDays != nil {
+		singleton.Conf.TerminalRecordingRetentionDays = *sf.TerminalRecordingRetentionDays
+	}
 	mcpWasEnabled := singleton.Conf.MCPEnabled()
 	mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
 

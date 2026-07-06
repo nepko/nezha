@@ -100,6 +100,10 @@ type Config struct {
 	LoginBanMinutes      int    `koanf:"login_ban_minutes" json:"login_ban_minutes,omitempty"`           // IP 封禁分钟数
 	AllowedLoginCIDRs    string `koanf:"allowed_login_cidrs" json:"allowed_login_cidrs,omitempty"`       // 允许登录的 CIDR，逗号分隔，空=不限制
 
+	// 二开：终端会话录制（默认关闭，开启后对新会话双向字节流分块落库供回放）
+	TerminalRecordingEnabled       bool `koanf:"terminal_recording_enabled" json:"terminal_recording_enabled,omitempty"`
+	TerminalRecordingRetentionDays int  `koanf:"terminal_recording_retention_days" json:"terminal_recording_retention_days,omitempty"` // 录制保留天数，0 表示永久
+
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
 
@@ -245,6 +249,9 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 	if c.LoginBanMinutes == 0 {
 		c.LoginBanMinutes = 60
+	}
+	if c.TerminalRecordingRetentionDays == 0 {
+		c.TerminalRecordingRetentionDays = 7
 	}
 
 	if c.AgentSecretKey == "" {

@@ -66,7 +66,46 @@ func LoadSingleton(bus chan<- *model.Service) (err error) {
 	ServerTransferShared = NewServerTransferClass()
 	// 最后初始化 ServiceSentinel
 	ServiceSentinelShared, err = NewServiceSentinel(bus)
+	go initRecordingCleanup()
 	return
+}
+
+// initRecordingCleanup 周期性清理超过保留期的终端录制分块，避免无限增长。
+// 仅当 TerminalRecordingRetentionDays > 0 时真正删除数据。
+func initRecordingCleanup() {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		CleanupTerminalRecordings()
+	}
+}
+
+// CleanupTerminalRecordings 删除超过保留期的录制会话（按会话整体 EndTs 判定）。
+func CleanupTerminalRecordings() {
+	if Conf == nil || Conf.TerminalRecordingRetentionDays <= 0 || DB == nil {
+		return
+	}
+	cutoff := time.Now().Add(-time.Duration(Conf.TerminalRecordingRetentionDays) * 24 * time.Hour).UnixMilli()
+
+	type sessAgg struct {
+		SessionID string
+		EndTs     int64
+	}
+	var sessions []sessAgg
+	if err := DB.Model(&model.TerminalRecordingChunk{}).
+		Select("session_id, MAX(ts) as end_ts").
+		Group("session_id").
+		Scan(&sessions).Error; err != nil {
+		log.Printf("NEZHA>> CleanupTerminalRecordings list failed: %v", err)
+		return
+	}
+	for _, s := range sessions {
+		if s.EndTs < cutoff {
+			if err := DB.Where("session_id = ?", s.SessionID).Delete(&model.TerminalRecordingChunk{}).Error; err != nil {
+				log.Printf("NEZHA>> CleanupTerminalRecordings delete %s failed: %v", s.SessionID, err)
+			}
+		}
+	}
 }
 
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates
@@ -98,7 +137,7 @@ func InitDBFromPath(path string) error {
 		model.APIToken{}, model.MCPAuditLog{},
 		model.BatchOperationHistory{}, model.CustomMetric{},
 		model.QuickCommand{}, model.CommandHistory{}, model.CommandPolicy{}, model.CommandApproval{},
-		model.TerminalSession{}, model.TerminalSessionEvent{})
+		model.TerminalSession{}, model.TerminalSessionEvent{}, model.TerminalRecordingChunk{})
 	if err != nil {
 		return err
 	}

@@ -126,6 +126,9 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/terminal", restScopeMiddleware(model.ScopeServerExec), commonHandler(createTerminal))
 	auth.GET("/terminal/sessions", restScopeMiddleware(model.ScopeServerExec), commonHandler(listTerminalSessions))
 	auth.GET("/ws/terminal/:id", restScopeMiddleware(model.ScopeServerExec), commonHandler(terminalStream))
+	// 二开：终端会话录制回放（审计数据，仅管理员）
+	auth.GET("/terminal/recordings", restScopeMiddleware(model.ScopeAdminAll), commonHandler(listTerminalRecordings))
+	auth.GET("/terminal/recordings/:id", restScopeMiddleware(model.ScopeAdminAll), commonHandler(getTerminalRecording))
 	auth.POST("/file", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(createFM))
 	auth.GET("/ws/file/:id", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(fmStream))
 	auth.GET("/server", restScopeMiddleware(model.ScopeInventoryRead), listHandler(listServer))
@@ -460,6 +463,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		regexp.MustCompile(`^/dashboard/transfer$`),
 		regexp.MustCompile(`^/dashboard/security$`),
 		regexp.MustCompile(`^/dashboard/command-policy$`),
+		regexp.MustCompile(`^/dashboard/recordings$`),
 	}
 
 	getFallbackStatusCode := func(path string) int {

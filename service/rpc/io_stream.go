@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"sync"
 	"time"
 
+	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -34,6 +36,8 @@ type ioStreamContext struct {
 	agentIoChOnce    sync.Once
 	revokedCh        chan struct{}
 	revokedOnce      sync.Once
+	// recordable 标记该流为终端会话、允许在 StartStream 中按配置录制。
+	recordable bool
 }
 
 type bp struct {
@@ -60,6 +64,19 @@ var (
 
 func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64, targetServerID uint64) error {
 	return s.CreateStreamWithPurpose(streamId, creatorUserID, targetServerID, PurposeLegacy)
+}
+
+// MarkRecording 标记某个流为终端会话、允许在 StartStream 中按配置录制。
+// 仅终端流调用；文件管理器 / NAT / 传输流不标记，避免误录。
+func (s *NezhaHandler) MarkRecording(streamId string, on bool) error {
+	s.ioStreamMutex.Lock()
+	defer s.ioStreamMutex.Unlock()
+	stream, ok := s.ioStreams[streamId]
+	if !ok {
+		return errors.New("stream not found")
+	}
+	stream.recordable = on
+	return nil
 }
 
 func (s *NezhaHandler) CreateStreamWithPurpose(streamId string, creatorUserID uint64, targetServerID uint64, purpose StreamPurpose) error {
@@ -384,18 +401,116 @@ LOOP:
 
 	errCh := make(chan error, 2)
 
+	// 二开：终端会话录制。仅当该流被标记为可录制且配置开启时，用 io.TeeReader
+	// 在双向拷贝处注入录制器。录制失败仅记日志，绝不中断终端会话。
+	var recorder *recordingRecorder
+	if stream.recordable && singleton.Conf != nil && singleton.Conf.TerminalRecordingEnabled && singleton.DB != nil {
+		recorder = newRecordingRecorder(streamId, stream.targetServerID)
+	}
+
 	go func() {
 		bp := bufPool.Get().(*bp)
 		defer bufPool.Put(bp)
-		_, innerErr := io.CopyBuffer(userIo, agentIo, bp.buf)
+		src := io.Reader(agentIo)
+		if recorder != nil {
+			src = io.TeeReader(agentIo, &recordingWriter{rec: recorder, direction: model.RecordingDirectionOutput})
+		}
+		_, innerErr := io.CopyBuffer(userIo, src, bp.buf)
 		errCh <- innerErr
 	}()
 	go func() {
 		bp := bufPool.Get().(*bp)
 		defer bufPool.Put(bp)
-		_, innerErr := io.CopyBuffer(agentIo, userIo, bp.buf)
+		src := io.Reader(userIo)
+		if recorder != nil {
+			src = io.TeeReader(userIo, &recordingWriter{rec: recorder, direction: model.RecordingDirectionInput})
+		}
+		_, innerErr := io.CopyBuffer(agentIo, src, bp.buf)
 		errCh <- innerErr
 	}()
 
-	return <-errCh
+	err = <-errCh
+	if recorder != nil {
+		recorder.flush()
+	}
+	return err
+}
+
+// recordingRecorder 收集双向字节流并按块批量落库，供回放。
+// 两条拷贝 goroutine 并发写入，seq 用原子递增保证回放顺序，批量写缓冲降低 DB 压力。
+type recordingRecorder struct {
+	sessionID string
+	serverID  uint64
+	seq       int64
+	mu        sync.Mutex
+	batch     []*model.TerminalRecordingChunk
+}
+
+func newRecordingRecorder(sessionID string, serverID uint64) *recordingRecorder {
+	return &recordingRecorder{sessionID: sessionID, serverID: serverID}
+}
+
+const recordingMaxChunk = 32 * 1024
+
+func (r *recordingRecorder) write(direction uint8, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	ts := time.Now().UnixMilli()
+	var pending []*model.TerminalRecordingChunk
+	for off := 0; off < len(data); off += recordingMaxChunk {
+		end := off + recordingMaxChunk
+		if end > len(data) {
+			end = len(data)
+		}
+		// io.CopyBuffer 复用底层缓冲，必须拷贝后再持有。
+		cp := make([]byte, end-off)
+		copy(cp, data[off:end])
+		r.seq++
+		pending = append(pending, &model.TerminalRecordingChunk{
+			SessionID: r.sessionID,
+			ServerID:  r.serverID,
+			Seq:       r.seq,
+			Ts:        ts,
+			Direction: direction,
+			Data:      cp,
+		})
+	}
+
+	r.mu.Lock()
+	r.batch = append(r.batch, pending...)
+	if len(r.batch) >= 100 {
+		batch := r.batch
+		r.batch = nil
+		r.mu.Unlock()
+		if err := singleton.DB.CreateInBatches(batch, 100).Error; err != nil {
+			log.Printf("NEZHA>> recording write failed: %v", err)
+		}
+		return
+	}
+	r.mu.Unlock()
+}
+
+func (r *recordingRecorder) flush() {
+	r.mu.Lock()
+	batch := r.batch
+	r.batch = nil
+	r.mu.Unlock()
+	if len(batch) == 0 {
+		return
+	}
+	if err := singleton.DB.CreateInBatches(batch, 200).Error; err != nil {
+		log.Printf("NEZHA>> recording flush failed: %v", err)
+	}
+}
+
+// recordingWriter 适配 io.Writer，将一端字节流写入录制器。
+type recordingWriter struct {
+	rec       *recordingRecorder
+	direction uint8
+}
+
+func (w *recordingWriter) Write(p []byte) (int, error) {
+	w.rec.write(w.direction, p)
+	return len(p), nil
 }

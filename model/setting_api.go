@@ -20,6 +20,10 @@ type SettingForm struct {
 	EnableIPChangeNotification  bool `json:"enable_ip_change_notification,omitempty" validate:"optional"`
 	EnablePlainIPInNotification bool `json:"enable_plain_ip_in_notification,omitempty" validate:"optional"`
 	EnableMCP                   *bool `json:"enable_mcp,omitempty" validate:"optional"`
+
+	// 二开：终端会话录制开关（默认关闭）。用指针，避免其它设置保存时把未传字段重置为 false。
+	TerminalRecordingEnabled       *bool `json:"terminal_recording_enabled,omitempty" validate:"optional"`
+	TerminalRecordingRetentionDays *int  `json:"terminal_recording_retention_days,omitempty" validate:"optional"`
 }
 
 type Setting struct {
