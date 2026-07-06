@@ -28,6 +28,15 @@ type SettingForm struct {
 	FMEnhancedEnabled *bool `json:"fm_enhanced_enabled,omitempty" validate:"optional"`
 	// 二开：终端空闲超时（秒，0=不限制）。
 	TerminalIdleTimeoutSeconds *int `json:"terminal_idle_timeout_seconds,omitempty" validate:"optional"`
+
+	// 二开：终端 AI 助手（OpenAI 兼容）。ai_api_key 空字符串表示“保留已配置密钥”，
+	// 仅在用户显式填写时才覆盖；绝不通过 GET /setting 回传明文。
+	AIEnabled    *bool  `json:"ai_enabled,omitempty" validate:"optional"`
+	AIBaseURL    string `json:"ai_base_url,omitempty" validate:"optional"`
+	AIApiKey     string `json:"ai_api_key,omitempty" validate:"optional"`
+	AIModel      string `json:"ai_model,omitempty" validate:"optional"`
+	AITemperature *float64 `json:"ai_temperature,omitempty" validate:"optional"`
+	AIMaxTokens  *int   `json:"ai_max_tokens,omitempty" validate:"optional"`
 }
 
 type Setting struct {
@@ -42,6 +51,12 @@ type Setting struct {
 	TerminalRecordingRetentionDays int  `json:"terminal_recording_retention_days,omitempty" gorm:"-"`
 	TerminalIdleTimeoutSeconds     int  `json:"terminal_idle_timeout_seconds,omitempty" gorm:"-"`
 	FMEnhancedEnabled              bool `json:"fm_enhanced_enabled,omitempty" gorm:"-"`
+
+	// 二开：终端 AI 助手开关与连接信息（不含明文 API Key，仅暴露是否已配置）。
+	AIEnabled    bool `json:"ai_enabled,omitempty" gorm:"-"`
+	AIBaseURL    string `json:"ai_base_url,omitempty" gorm:"-"`
+	AIModel      string `json:"ai_model,omitempty" gorm:"-"`
+	AIApiKeySet  bool   `json:"ai_api_key_set,omitempty" gorm:"-"`
 }
 
 type FrontendTemplate struct {

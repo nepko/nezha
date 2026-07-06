@@ -111,6 +111,14 @@ type Config struct {
 	// 二开：终端空闲超时自动断开（秒），0 表示不限制。
 	TerminalIdleTimeoutSeconds int `koanf:"terminal_idle_timeout_seconds" json:"terminal_idle_timeout_seconds,omitempty"`
 
+	// 二开：终端 AI 助手（OpenAI 兼容接口）。ai_api_key 仅在服务端落盘，绝不经 API 回传前端。
+	AIEnabled    bool    `koanf:"ai_enabled" json:"ai_enabled,omitempty"`
+	AIBaseURL    string  `koanf:"ai_base_url" json:"ai_base_url,omitempty"`     // 兼容 OpenAI 的 base，如 https://api.openai.com/v1
+	AIApiKey     string  `koanf:"ai_api_key" json:"ai_api_key,omitempty"`       // 服务端保存，API 不回传（model.Setting 不含此字段）
+	AIModel      string  `koanf:"ai_model" json:"ai_model,omitempty"`
+	AITemperature float64 `koanf:"ai_temperature" json:"ai_temperature,omitempty"`
+	AIMaxTokens  int     `koanf:"ai_max_tokens" json:"ai_max_tokens,omitempty"`
+
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
 

@@ -60,6 +60,10 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 			TerminalRecordingRetentionDays: singleton.Conf.TerminalRecordingRetentionDays,
 			TerminalIdleTimeoutSeconds:     singleton.Conf.TerminalIdleTimeoutSeconds,
 			FMEnhancedEnabled:              singleton.Conf.FMEnhancedEnabled,
+			AIEnabled:                      singleton.Conf.AIEnabled,
+			AIBaseURL:                      singleton.Conf.AIBaseURL,
+			AIModel:                        singleton.Conf.AIModel,
+			AIApiKeySet:                    singleton.Conf.AIApiKey != "",
 		},
 		TSDBEnabled: singleton.TSDBEnabled(),
 	}
@@ -127,6 +131,26 @@ func updateConfig(c *gin.Context) (any, error) {
 	if sf.TerminalIdleTimeoutSeconds != nil {
 		singleton.Conf.TerminalIdleTimeoutSeconds = *sf.TerminalIdleTimeoutSeconds
 	}
+	// 二开：终端 AI 助手配置落地。ai_api_key 仅在用户显式填写时才覆盖，
+	// 留空保持原值（避免一次普通保存把已配置的密钥清空）。
+	if sf.AIEnabled != nil {
+		singleton.Conf.AIEnabled = *sf.AIEnabled
+	}
+	if sf.AIBaseURL != "" {
+		singleton.Conf.AIBaseURL = sf.AIBaseURL
+	}
+	if sf.AIApiKey != "" {
+		singleton.Conf.AIApiKey = sf.AIApiKey
+	}
+	if sf.AIModel != "" {
+		singleton.Conf.AIModel = sf.AIModel
+	}
+	if sf.AITemperature != nil {
+		singleton.Conf.AITemperature = *sf.AITemperature
+	}
+	if sf.AIMaxTokens != nil {
+		singleton.Conf.AIMaxTokens = *sf.AIMaxTokens
+	}
 	mcpWasEnabled := singleton.Conf.MCPEnabled()
 	mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
 
@@ -136,6 +160,12 @@ func updateConfig(c *gin.Context) (any, error) {
 		singleton.Conf.Save,
 		fireMCPKillSwitch,
 	); err != nil {
+		return nil, newGormError("%v", err)
+	}
+
+	// 二开修复：原先仅 MCP 开关变更会触发 Conf.Save()，其余设置（含终端录制/AI 等
+	// 二开字段）改动后仅停留在内存、重启即丢失。这里统一写回 config.yaml。
+	if err := singleton.Conf.Save(); err != nil {
 		return nil, newGormError("%v", err)
 	}
 
