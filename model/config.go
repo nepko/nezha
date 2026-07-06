@@ -104,6 +104,10 @@ type Config struct {
 	TerminalRecordingEnabled       bool `koanf:"terminal_recording_enabled" json:"terminal_recording_enabled,omitempty"`
 	TerminalRecordingRetentionDays int  `koanf:"terminal_recording_retention_days" json:"terminal_recording_retention_days,omitempty"` // 录制保留天数，0 表示永久
 
+	// 二开：文件管理器增强（在线编辑/权限属主/压缩解压）。
+	// 仅控制前端增强操作入口；真实磁盘操作依赖外部 nezhahq/agent 实现对应 op，默认关闭。
+	FMEnhancedEnabled bool `koanf:"fm_enhanced_enabled" json:"fm_enhanced_enabled,omitempty"`
+
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`
 

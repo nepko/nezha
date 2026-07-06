@@ -131,6 +131,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/terminal/recordings/:id", restScopeMiddleware(model.ScopeAdminAll), commonHandler(getTerminalRecording))
 	auth.POST("/file", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(createFM))
 	auth.GET("/ws/file/:id", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(fmStream))
+	// 二开：文件管理器增强开关查询
+	auth.GET("/file/enhanced", restScopeMiddleware(model.ScopeServerRead), commonHandler(getFMEnhanced))
 	auth.GET("/server", restScopeMiddleware(model.ScopeInventoryRead), listHandler(listServer))
 	auth.PATCH("/server/:id", restScopeMiddleware(model.ScopeServerWrite), commonHandler(updateServer))
 	auth.GET("/server/config/:id", restScopeMiddleware(serverConfigSensitiveScope()), commonHandler(getServerConfig))

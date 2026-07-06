@@ -24,6 +24,8 @@ type SettingForm struct {
 	// 二开：终端会话录制开关（默认关闭）。用指针，避免其它设置保存时把未传字段重置为 false。
 	TerminalRecordingEnabled       *bool `json:"terminal_recording_enabled,omitempty" validate:"optional"`
 	TerminalRecordingRetentionDays *int  `json:"terminal_recording_retention_days,omitempty" validate:"optional"`
+	// 二开：文件管理器增强开关（默认关闭）。
+	FMEnhancedEnabled *bool `json:"fm_enhanced_enabled,omitempty" validate:"optional"`
 }
 
 type Setting struct {

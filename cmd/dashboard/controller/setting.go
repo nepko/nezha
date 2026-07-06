@@ -117,6 +117,9 @@ func updateConfig(c *gin.Context) (any, error) {
 	if sf.TerminalRecordingRetentionDays != nil {
 		singleton.Conf.TerminalRecordingRetentionDays = *sf.TerminalRecordingRetentionDays
 	}
+	if sf.FMEnhancedEnabled != nil {
+		singleton.Conf.FMEnhancedEnabled = *sf.FMEnhancedEnabled
+	}
 	mcpWasEnabled := singleton.Conf.MCPEnabled()
 	mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
 
