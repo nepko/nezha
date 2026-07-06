@@ -2,9 +2,11 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -14,7 +16,13 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
-const aiDefaultTimeout = 120 * time.Second
+const (
+	// aiDialTimeout 仅约束建连阶段（DNS/TLS/响应头），避免卡在建连。
+	aiDialTimeout = 15 * time.Second
+	// aiMaxStreamSeconds 单次对话的硬上限，防止模型/上游异常导致流永不结束、
+	// 占满服务端 goroutine。用户主动断开仍由请求 context 即时取消。
+	aiMaxStreamSeconds = 600
+)
 
 type aiChatMessage struct {
 	Role    string `json:"role"`
@@ -25,12 +33,6 @@ type aiChatRequest struct {
 	Messages    []aiChatMessage `json:"messages"`
 	Temperature float64         `json:"temperature"`
 	MaxTokens   int             `json:"max_tokens"`
-}
-
-// jsonString 将字符串安全编码为 JSON 字符串字面量（含转义与引号）。
-func jsonString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
 }
 
 // aiChatStream 终端 AI 助手：把请求转发到 OpenAI 兼容的 /chat/completions，
@@ -79,6 +81,8 @@ func aiChatStream(c *gin.Context) {
 		"stream":      true,
 		"temperature": temperature,
 		"max_tokens":  maxTokens,
+		// 请求 usage 统计，便于前端展示 token 消耗。
+		"stream_options": map[string]any{"include_usage": true},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -86,9 +90,12 @@ func aiChatStream(c *gin.Context) {
 		return
 	}
 
-	// 绑定客户端上下文：用户断开连接即取消上游请求，避免泄漏。
+	// 客户端断开即取消上游请求；叠加上限防止异常流永驻。
+	ctx, cancel := context.WithTimeout(c.Request.Context(), aiMaxStreamSeconds*time.Second)
+	defer cancel()
+
 	upstreamReq, err := http.NewRequestWithContext(
-		c.Request.Context(),
+		ctx,
 		http.MethodPost,
 		baseURL+"/chat/completions",
 		bytes.NewReader(body),
@@ -101,9 +108,21 @@ func aiChatStream(c *gin.Context) {
 	upstreamReq.Header.Set("Authorization", "Bearer "+conf.AIApiKey)
 	upstreamReq.Header.Set("Accept", "text/event-stream")
 
-	client := &http.Client{Timeout: aiDefaultTimeout}
+	// 关键修复：http.Client.Timeout 会把「读取整段流式响应」计入超时，
+	// 导致长对话在旧值下被掐断。改为仅在建连阶段做超时，流式读取交由
+	// 请求 context（用户断开 / 上限）控制。
+	transport := &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: aiDialTimeout}).DialContext,
+		TLSHandshakeTimeout:   aiDialTimeout,
+		ResponseHeaderTimeout: aiDialTimeout,
+	}
+	client := &http.Client{Transport: transport}
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
+		// 用户主动断开（context canceled）不应记为网关错误。
+		if ctx.Err() == context.Canceled {
+			return
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "调用 AI 服务失败: " + err.Error()})
 		return
 	}
@@ -132,6 +151,42 @@ func aiChatStream(c *gin.Context) {
 		}
 	}
 
+	// decodeSSE 解析单条 OpenAI 风格 SSE data：返回增量文本、usage 与上游错误。
+	decodeSSE := func(data string) (delta string, usage map[string]any, errMsg string) {
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+			} `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return "", nil, ""
+		}
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return "", nil, chunk.Error.Message
+		}
+		for _, ch := range chunk.Choices {
+			delta += ch.Delta.Content
+		}
+		if chunk.Usage != nil {
+			usage = map[string]any{
+				"prompt_tokens":     chunk.Usage.PromptTokens,
+				"completion_tokens": chunk.Usage.CompletionTokens,
+				"total_tokens":      chunk.Usage.TotalTokens,
+			}
+		}
+		return delta, usage, ""
+	}
+
 	buf := make([]byte, 4096)
 	var acc []byte
 	for {
@@ -155,33 +210,25 @@ func aiChatStream(c *gin.Context) {
 					if data == "[DONE]" {
 						continue
 					}
-					var chunk struct {
-						Choices []struct {
-							Delta struct {
-								Content string `json:"content"`
-							} `json:"delta"`
-						} `json:"choices"`
-						Error *struct {
-							Message string `json:"message"`
-						} `json:"error"`
-					}
-					if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-						continue
-					}
-					if chunk.Error != nil && chunk.Error.Message != "" {
-						emit(map[string]any{"error": chunk.Error.Message, "done": true})
+					delta, usage, errMsg := decodeSSE(data)
+					if errMsg != "" {
+						emit(map[string]any{"error": errMsg, "done": true})
 						return
 					}
-					for _, ch := range chunk.Choices {
-						if ch.Delta.Content != "" {
-							emit(map[string]any{"delta": ch.Delta.Content, "done": false})
-						}
+					if delta != "" {
+						emit(map[string]any{"delta": delta, "done": false})
+					}
+					if usage != nil {
+						emit(map[string]any{"usage": usage, "done": false})
 					}
 				}
 			}
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
+				if ctx.Err() == context.Canceled {
+					return
+				}
 				emit(map[string]any{"error": "读取 AI 流失败: " + readErr.Error(), "done": true})
 			}
 			break

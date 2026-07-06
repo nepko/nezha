@@ -158,6 +158,10 @@ func terminalStream(c *gin.Context) (any, error) {
 					return // 流已结束
 				}
 				if idle >= int64(timeout.Seconds()) {
+					// 二开：空闲超时断开，操作审计落库并向前端发送断开原因。
+					singleton.WriteAuditLog(c, model.AuditActionTerminalIdleDisconnect, "terminal", 0, streamId, true)
+					_ = wsConn.WriteMessage(websocket.CloseMessage,
+						websocket.FormatCloseMessage(4000, "idle-timeout"))
 					_ = wsConn.Close()
 					return
 				}

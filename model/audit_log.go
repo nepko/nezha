@@ -15,6 +15,7 @@ const (
 	AuditActionServerUpdate  = "server_update"
 	AuditActionServerDelete  = "server_delete"
 	AuditActionTerminalCreate = "terminal_create"
+	AuditActionTerminalIdleDisconnect = "terminal_idle_disconnect"
 	AuditActionFMCreate     = "fm_create"
 	AuditActionCronCreate   = "cron_create"
 	AuditActionCronUpdate   = "cron_update"

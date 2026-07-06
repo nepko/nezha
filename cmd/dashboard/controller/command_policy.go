@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"regexp"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	pb "github.com/nezhahq/nezha/proto"
@@ -17,6 +18,27 @@ type CommandPolicyDecision struct {
 	NeedsApproval bool
 	Reason        string
 	PolicyName    string
+}
+
+// policyRegexCache 缓存命令策略正则编译结果，避免每次评估全量重编译。
+// 编译失败的正则也会缓存其错误，避免对同一坏正则反复编译。
+// 注：策略正则由管理员在后台维护，变更频率极低；如需精确失效可在
+// 策略增删改路由中调用 policyRegexCache.Delete(pat) 清空对应条目。
+var policyRegexCache sync.Map
+
+type cachedRegex struct {
+	re  *regexp.Regexp
+	err error
+}
+
+func getCompiledRegex(pat string) (*regexp.Regexp, error) {
+	if v, ok := policyRegexCache.Load(pat); ok {
+		c := v.(cachedRegex)
+		return c.re, c.err
+	}
+	re, err := regexp.Compile(pat)
+	policyRegexCache.Store(pat, cachedRegex{re: re, err: err})
+	return re, err
 }
 
 // evaluateCommandPolicy 评估命令是否通过已启用的策略：
@@ -40,7 +62,7 @@ func evaluateCommandPolicy(command string) (CommandPolicyDecision, error) {
 		}
 		matched := false
 		for _, pat := range patterns {
-			re, err := regexp.Compile(pat)
+			re, err := getCompiledRegex(pat)
 			if err != nil {
 				continue
 			}
