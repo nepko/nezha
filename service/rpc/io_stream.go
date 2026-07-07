@@ -473,6 +473,11 @@ LOOP:
 	}()
 
 	err = <-errCh
+	if e2, ok := <-errCh; ok && err == nil {
+		err = e2
+	}
+	// 必须等两条拷贝 goroutine 都结束（它们的最后一次 r.write 可能晚于第一条
+	// 退出）再 flush，否则尾包录制分块会在 flush 之后被追加而丢失。
 	if recorder != nil {
 		recorder.flush()
 	}
@@ -509,11 +514,13 @@ func (r *recordingRecorder) write(direction uint8, data []byte) {
 		// io.CopyBuffer 复用底层缓冲，必须拷贝后再持有。
 		cp := make([]byte, end-off)
 		copy(cp, data[off:end])
-		r.seq++
+		// 双向拷贝 goroutine 并发写同一 recorder，seq 必须用原子自增，
+		// 否则两路同时 r.seq++ 会触发数据竞争并可能丢失/错序，破坏回放顺序。
+		seq := atomic.AddInt64(&r.seq, 1)
 		pending = append(pending, &model.TerminalRecordingChunk{
 			SessionID: r.sessionID,
 			ServerID:  r.serverID,
-			Seq:       r.seq,
+			Seq:       seq,
 			Ts:        ts,
 			Direction: direction,
 			Data:      cp,
