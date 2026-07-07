@@ -17,6 +17,7 @@ var gzipMimeTypes = map[string]bool{
 	"text/plain":               true,
 	"application/javascript":   true,
 	"application/x-javascript": true,
+	"text/javascript":          true,
 	"application/json":         true,
 	"application/xml":          true,
 	"image/svg+xml":            true,
