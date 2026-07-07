@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
 
@@ -8,6 +11,21 @@ import (
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
 )
+
+// validateCommandPolicy 对命令策略做服务端兜底校验（前端 zod 之外的纵深防御），
+// 防止空名称 / 空匹配规则 / 非法类型直接落库。
+func validateCommandPolicy(p *model.CommandPolicy) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return errors.New("策略名称不能为空")
+	}
+	if strings.TrimSpace(p.CommandsRaw) == "" {
+		return errors.New("匹配规则（patterns）不能为空")
+	}
+	if p.Type != model.CommandPolicyWhitelist && p.Type != model.CommandPolicyBlacklist {
+		return errors.New("策略类型非法（应为 1=白名单 或 2=黑名单）")
+	}
+	return nil
+}
 
 // ListQuickCommands 列出所有快捷命令
 func listQuickCommands(c *gin.Context) ([]*model.QuickCommand, error) {
@@ -256,6 +274,9 @@ func createCommandPolicy(c *gin.Context) (*model.CommandPolicy, error) {
 	if err := c.ShouldBindJSON(&policy); err != nil {
 		return nil, err
 	}
+	if err := validateCommandPolicy(&policy); err != nil {
+		return nil, err
+	}
 	if err := singleton.DB.Create(&policy).Error; err != nil {
 		return nil, err
 	}
@@ -274,6 +295,9 @@ func updateCommandPolicy(c *gin.Context) (*model.CommandPolicy, error) {
 
 	var form model.CommandPolicy
 	if err := c.ShouldBindJSON(&form); err != nil {
+		return nil, err
+	}
+	if err := validateCommandPolicy(&form); err != nil {
 		return nil, err
 	}
 

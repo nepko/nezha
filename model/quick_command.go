@@ -105,7 +105,7 @@ type TerminalTheme struct {
 	BrightRed      string `json:"brightRed"`
 	BrightGreen    string `json:"brightGreen"`
 	BrightYellow   string `json:"brightYellow"`
-	BrightBlue     string `json:"blue"`
+	BrightBlue     string `json:"brightBlue"`
 	BrightMagenta  string `json:"brightMagenta"`
 	BrightCyan     string `json:"brightCyan"`
 	BrightWhite    string `json:"brightWhite"`
