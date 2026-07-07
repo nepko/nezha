@@ -259,6 +259,8 @@ func createCommandPolicy(c *gin.Context) (*model.CommandPolicy, error) {
 	if err := singleton.DB.Create(&policy).Error; err != nil {
 		return nil, err
 	}
+	invalidatePolicyRegexCache()
+	invalidateEnabledPolicyCache()
 	return &policy, nil
 }
 
@@ -283,6 +285,8 @@ func updateCommandPolicy(c *gin.Context) (*model.CommandPolicy, error) {
 	if err := singleton.DB.Save(&policy).Error; err != nil {
 		return nil, err
 	}
+	invalidatePolicyRegexCache()
+	invalidateEnabledPolicyCache()
 	return &policy, nil
 }
 
@@ -292,6 +296,8 @@ func deleteCommandPolicy(c *gin.Context) (*model.CommonResponse[any], error) {
 	if err := singleton.DB.Delete(&model.CommandPolicy{}, id).Error; err != nil {
 		return nil, err
 	}
+	invalidatePolicyRegexCache()
+	invalidateEnabledPolicyCache()
 	return &model.CommonResponse[any]{
 		Success: true,
 	}, nil
@@ -306,6 +312,8 @@ func batchDeleteCommandPolicy(c *gin.Context) (*model.CommonResponse[any], error
 	if err := singleton.DB.Delete(&model.CommandPolicy{}, ids).Error; err != nil {
 		return nil, err
 	}
+	invalidatePolicyRegexCache()
+	invalidateEnabledPolicyCache()
 	return &model.CommonResponse[any]{
 		Success: true,
 	}, nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	pb "github.com/nezhahq/nezha/proto"
@@ -41,17 +42,49 @@ func getCompiledRegex(pat string) (*regexp.Regexp, error) {
 	return re, err
 }
 
+// invalidatePolicyRegexCache 清空已编译正则缓存，使管理员对策略正则的增删改
+// 在下次评估时立即生效，无需重启进程。策略由管理员低频维护，全量清除即可，
+// 不必解析旧 pattern 精确删除单条（避免漏清导致旧编译结果残留）。
+func invalidatePolicyRegexCache() {
+	policyRegexCache.Range(func(k, _ any) bool {
+		policyRegexCache.Delete(k)
+		return true
+	})
+}
+
+// enabledPolicyCache 缓存「当前启用的命令策略」列表，避免每次评估都全表查询
+// DB。与 policyRegexCache 同源失效：任意策略增删改后整体重建。
+var enabledPolicyCache atomic.Value // []model.CommandPolicy
+
+// loadEnabledPolicies 返回当前启用的策略列表，优先命中内存缓存。
+func loadEnabledPolicies() ([]model.CommandPolicy, error) {
+	if cached, ok := enabledPolicyCache.Load().([]model.CommandPolicy); ok && cached != nil {
+		return cached, nil
+	}
+	var policies []model.CommandPolicy
+	if err := singleton.DB.Where("enabled = ?", true).Find(&policies).Error; err != nil {
+		return nil, err
+	}
+	for i := range policies {
+		_ = policies[i].AfterFind(singleton.DB)
+	}
+	enabledPolicyCache.Store(policies)
+	return policies, nil
+}
+
+// invalidateEnabledPolicyCache 在策略变更后清空列表缓存。
+func invalidateEnabledPolicyCache() {
+	enabledPolicyCache.Store([]model.CommandPolicy(nil))
+}
+
 // evaluateCommandPolicy 评估命令是否通过已启用的策略：
 //   - 黑名单命中且需审批 → NeedsApproval
 //   - 黑名单命中且无需审批 → Blocked
 //   - 白名单启用且未命中任何模式 → Blocked
 func evaluateCommandPolicy(command string) (CommandPolicyDecision, error) {
-	var policies []model.CommandPolicy
-	if err := singleton.DB.Where("enabled = ?", true).Find(&policies).Error; err != nil {
+	policies, err := loadEnabledPolicies()
+	if err != nil {
 		return CommandPolicyDecision{}, err
-	}
-	for i := range policies {
-		_ = policies[i].AfterFind(singleton.DB)
 	}
 
 	decision := CommandPolicyDecision{Allow: true}

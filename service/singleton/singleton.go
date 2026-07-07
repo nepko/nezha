@@ -137,7 +137,8 @@ func InitDBFromPath(path string) error {
 		model.APIToken{}, model.MCPAuditLog{},
 		model.BatchOperationHistory{}, model.CustomMetric{},
 		model.QuickCommand{}, model.CommandHistory{}, model.CommandPolicy{}, model.CommandApproval{},
-		model.TerminalSession{}, model.TerminalSessionEvent{}, model.TerminalRecordingChunk{})
+		model.TerminalSession{}, model.TerminalSessionEvent{}, model.TerminalRecordingChunk{},
+		model.AIChatConversation{})
 	if err != nil {
 		return err
 	}

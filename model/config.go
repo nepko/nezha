@@ -118,6 +118,10 @@ type Config struct {
 	AIModel      string  `koanf:"ai_model" json:"ai_model,omitempty"`
 	AITemperature float64 `koanf:"ai_temperature" json:"ai_temperature,omitempty"`
 	AIMaxTokens  int     `koanf:"ai_max_tokens" json:"ai_max_tokens,omitempty"`
+	// 二开：AI Agent 工具调用与对话记忆。
+	AIToolsEnabled         bool   `koanf:"ai_tools_enabled" json:"ai_tools_enabled,omitempty"`                 // 是否允许 AI 调用工具（查数据/执行动作）
+	AIAllowedTools         string `koanf:"ai_allowed_tools" json:"ai_allowed_tools,omitempty"`                 // 逗号分隔的工具名白名单，空=全部允许
+	AICompressionThreshold int    `koanf:"ai_compression_threshold" json:"ai_compression_threshold,omitempty"` // 对话 token 超此值自动摘要压缩，0=默认 4000
 
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`

@@ -137,6 +137,11 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/file/enhanced", restScopeMiddleware(model.ScopeServerRead), commonHandler(getFMEnhanced))
 	// 二开：终端 AI 助手（OpenAI 兼容 SSE 流式对话，仅管理员）
 	auth.POST("/ai/chat", restScopeMiddleware(model.ScopeAdminAll), aiChatStream)
+	// 二开：AI Agent 工具清单与对话记忆（仅管理员）
+	auth.GET("/ai/tools", restScopeMiddleware(model.ScopeAdminAll), commonHandler(aiListTools))
+	auth.GET("/ai/history", restScopeMiddleware(model.ScopeAdminAll), commonHandler(aiGetHistory))
+	auth.POST("/ai/history", restScopeMiddleware(model.ScopeAdminAll), commonHandler(aiSaveHistory))
+	auth.DELETE("/ai/history", restScopeMiddleware(model.ScopeAdminAll), commonHandler(aiClearHistory))
 	auth.GET("/server", restScopeMiddleware(model.ScopeInventoryRead), listHandler(listServer))
 	auth.PATCH("/server/:id", restScopeMiddleware(model.ScopeServerWrite), commonHandler(updateServer))
 	auth.GET("/server/config/:id", restScopeMiddleware(serverConfigSensitiveScope()), commonHandler(getServerConfig))
