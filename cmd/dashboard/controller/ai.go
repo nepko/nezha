@@ -66,16 +66,26 @@ type oaToolFunc struct {
 type aiToolExecutor func(c *gin.Context, args map[string]any) (string, error)
 
 // aiToolRegistry 工具名 → 执行器。所有工具在 ScopeAdminAll 下运行（/ai/chat 已限定管理员）。
+// 扩展工具（趋势/列表/批量/重启）执行器见 ai_ext.go，受 AIAllowedTools 白名单管控。
 var aiToolRegistry = map[string]aiToolExecutor{
-	"list_servers":       aiToolListServers,
-	"get_server_metrics": aiToolGetServerMetrics,
-	"list_alert_rules":   aiToolListAlertRules,
-	"execute_command":    aiToolExecuteCommand,
+	"list_servers":               aiToolListServers,
+	"get_server_metrics":         aiToolGetServerMetrics,
+	"list_alert_rules":           aiToolListAlertRules,
+	"execute_command":            aiToolExecuteCommand,
+	"get_server_metrics_history": aiToolGetServerMetricsHistory,
+	"list_cron_tasks":            aiToolListCronTasks,
+	"list_notification_groups":   aiToolListNotificationGroups,
+	"list_services":              aiToolListServices,
+	"list_server_groups":         aiToolListServerGroups,
+	"get_alert_rule_detail":      aiToolGetAlertRuleDetail,
+	"get_traffic_summary":        aiToolGetTrafficSummary,
+	"batch_execute_command":      aiToolBatchExecuteCommand,
+	"restart_server":             aiToolRestartServer,
 }
 
 // aiToolDefs 返回全部工具定义（OpenAI tools 格式）。
 func aiToolDefs() []oaToolDef {
-	return []oaToolDef{
+	return append([]oaToolDef{
 		{
 			Type: "function",
 			Function: oaToolFunc{
@@ -132,7 +142,7 @@ func aiToolDefs() []oaToolDef {
 				},
 			},
 		},
-	}
+	}, aiExtToolDefs()...)
 }
 
 // aiAllowedToolDefs 根据配置白名单过滤工具定义。
@@ -282,6 +292,13 @@ func aiToolExecuteCommand(c *gin.Context, args map[string]any) (string, error) {
 	}
 	if decision.Blocked {
 		return "命令被命令策略拒绝: " + decision.Reason, nil
+	}
+	// 服务器访问授权（与 MCP server.exec 一致）：受限 PAT 即使持有 admin:* 作用域，
+	// 也只能对其 server_ids 白名单内的服务器执行命令，防止通过 AI 工具越权下发到
+	// allowlist 外的服务器。requireServerAccess 同时校验 PAT 服务器作用域与基础权限，
+	// 普通管理员 JWT（上下文无 PAT）则放行全部服务器，语义与批量/快捷命令一致。
+	if _, err := requireServerAccess(c, uint64(serverID)); err != nil {
+		return fmt.Sprintf("无法访问服务器 %d: %s", int(serverID), err.Error()), nil
 	}
 	server, ok := singleton.ServerShared.Get(uint64(serverID))
 	if !ok || server.GetTaskStream() == nil {
@@ -698,6 +715,27 @@ func aiChatStream(c *gin.Context) {
 	messages := make([]oaMessage, len(req.Messages))
 	copy(messages, req.Messages)
 
+	// 二开：AI 每日 token 预算（防服务端 API Key 被滥用，软限流）。超限直接拒绝。
+	uid := aiCurrentUserID(c)
+	if !aiBudgetAllow(uid, conf.AITokenBudgetDaily) {
+		emit(map[string]any{"error": "今日 AI 调用额度已用尽，请明日再试或联系管理员调整 ai_token_budget_daily", "done": true})
+		return
+	}
+	// 二开：AI 对话审计落库（记录最后一条用户提问摘要，便于事后追溯）。
+	var lastUser string
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			lastUser = req.Messages[i].Content
+			break
+		}
+	}
+	if lastUser != "" {
+		if len(lastUser) > 512 {
+			lastUser = lastUser[:512]
+		}
+		singleton.WriteAuditLog(c, model.AuditActionAIQuery, "ai", 0, lastUser, true)
+	}
+
 	for round := 0; round <= aiMaxToolRounds; round++ {
 		assistant, usage, err := aiStreamRound(ctx, conf, messages, tools, req.Temperature, req.MaxTokens, c, flusher, emit)
 		if err != nil {
@@ -709,6 +747,15 @@ func aiChatStream(c *gin.Context) {
 		messages = append(messages, assistant)
 		if usage != nil {
 			emit(map[string]any{"usage": usage, "done": false})
+			// 二开：累计每日 token 用量。
+			if tt, ok := usage["total_tokens"]; ok {
+				switch v := tt.(type) {
+				case int:
+					aiAddUsage(uid, v)
+				case float64:
+					aiAddUsage(uid, int(v))
+				}
+			}
 		}
 		if len(assistant.ToolCalls) == 0 {
 			break
@@ -720,13 +767,16 @@ func aiChatStream(c *gin.Context) {
 			if tc.Function.Arguments != "" {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 			}
+			argsJSON, _ := json.Marshal(args)
 			var result string
 			if exec, ok := aiToolRegistry[tc.Function.Name]; ok {
 				r, e := exec(c, args)
 				if e != nil {
 					result = "工具执行失败: " + e.Error()
+					aiWriteToolAudit(c, tc.Function.Name, string(argsJSON), result, false)
 				} else {
 					result = r
+					aiWriteToolAudit(c, tc.Function.Name, string(argsJSON), result, true)
 				}
 			} else {
 				result = "未知工具: " + tc.Function.Name

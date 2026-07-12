@@ -35,7 +35,7 @@ func setupMCPTest(t *testing.T) (func(), uint64) {
 	patConnectionRegistryShared = newPATConnectionRegistry()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.APIToken{}, &model.MCPAuditLog{}, &model.Server{}, &model.WAF{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.APIToken{}, &model.MCPAuditLog{}, &model.Server{}, &model.WAF{}, &model.CommandPolicy{}))
 	singleton.DB = db
 	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{JWTTimeout: 1}}
 	singleton.Conf.SetMCPEnabled(true)

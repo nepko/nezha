@@ -39,4 +39,12 @@ const (
 	MCPOutcomeRateLimited    = "rate_limited"
 	MCPOutcomeUnsupportedAgent = "unsupported_agent"
 	MCPOutcomeInternalError  = "internal_error"
+	// MCPOutcomePolicyBlocked 命令策略（黑名单命中无需审批 / 白名单未命中）
+	// 直接拦截 server.exec 的执行；与快捷命令/批量命令/AI 助手的策略校验共用
+	// evaluateCommandPolicy，避免 MCP 工具成为命令策略的绕过点。
+	MCPOutcomePolicyBlocked = "policy_blocked"
+	// MCPOutcomePolicyApprovalRequired 命令策略命中"需审批"项。MCP server.exec
+	// 是同步、程序化调用（LLM/脚本），无法等待人工审批，因此直接拒绝并提示
+	// 改走快捷命令/批量命令的审批流程下发。
+	MCPOutcomePolicyApprovalRequired = "policy_approval_required"
 )

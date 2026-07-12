@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+
 	"github.com/goccy/go-json"
 	"gorm.io/gorm"
 )
@@ -123,6 +125,18 @@ type CommandPolicy struct {
 }
 
 func (cp *CommandPolicy) BeforeSave(tx *gorm.DB) error {
+	// CommandsRaw 是前端提交的合法 JSON 数组文本（如 ["rm -rf"]）。model 的
+	// string 字段写入 text 列时原样落库，而读取时 GORM 会把它当 JSON 解析，因此
+	// 这里必须存成「被引号包裹的 JSON 字符串」（即再 json.Marshal 一层）：读取后
+	// 恰好还原为数组文本，供 controller.evaluateCommandPolicy 直接
+	// json.Unmarshal 成 []string。若直接存数组文本，读取时 GORM 会试图把 JSON 数组
+	// 解析进 string 字段而失败。同时校验 CommandsRaw 本身是合法 JSON 数组。
+	var probe []string
+	if cp.CommandsRaw != "" {
+		if err := json.Unmarshal([]byte(cp.CommandsRaw), &probe); err != nil {
+			return fmt.Errorf("commands_raw must be a JSON array of regex patterns: %w", err)
+		}
+	}
 	data, err := json.Marshal(cp.CommandsRaw)
 	if err != nil {
 		return err

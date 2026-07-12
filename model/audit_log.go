@@ -35,6 +35,9 @@ const (
 	AuditActionNotifyCreate  = "notification_create"
 	AuditActionNotifyUpdate  = "notification_update"
 	AuditActionNotifyDelete  = "notification_delete"
+	// 二开：AI 助手相关审计
+	AuditActionAIQuery    = "ai_query"
+	AuditActionAIToolCall = "ai_tool_call"
 )
 
 // AuditLog 审计日志模型

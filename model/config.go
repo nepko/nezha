@@ -108,6 +108,10 @@ type Config struct {
 	// 仅控制前端增强操作入口；真实磁盘操作依赖外部 nezhahq/agent 实现对应 op，默认关闭。
 	FMEnhancedEnabled bool `koanf:"fm_enhanced_enabled" json:"fm_enhanced_enabled,omitempty"`
 
+	// 二开：命令审批总开关（默认关闭）。关闭后即使存在 RequireApproval 策略也不触发审批，
+	// 直接放行；开启后才按命令策略执行审批闸。用于单人/个人场景下彻底关闭审批摩擦。
+	EnableCommandApproval bool `koanf:"enable_command_approval" json:"enable_command_approval,omitempty"`
+
 	// 二开：终端空闲超时自动断开（秒），0 表示不限制。
 	TerminalIdleTimeoutSeconds int `koanf:"terminal_idle_timeout_seconds" json:"terminal_idle_timeout_seconds,omitempty"`
 
@@ -122,6 +126,8 @@ type Config struct {
 	AIToolsEnabled         bool   `koanf:"ai_tools_enabled" json:"ai_tools_enabled,omitempty"`                 // 是否允许 AI 调用工具（查数据/执行动作）
 	AIAllowedTools         string `koanf:"ai_allowed_tools" json:"ai_allowed_tools,omitempty"`                 // 逗号分隔的工具名白名单，空=全部允许
 	AICompressionThreshold int    `koanf:"ai_compression_threshold" json:"ai_compression_threshold,omitempty"` // 对话 token 超此值自动摘要压缩，0=默认 4000
+	// 二开：AI 每用户每日 token 预算（软限流，防服务端 API Key 被滥用），0=不限。
+	AITokenBudgetDaily int `koanf:"ai_token_budget_daily" json:"ai_token_budget_daily,omitempty"`
 
 	jwtSecretFromEnv  bool `koanf:"-" json:"-" yaml:"-"`
 	jwtSecretFromYAML bool `koanf:"-" json:"-" yaml:"-"`

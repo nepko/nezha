@@ -189,3 +189,18 @@ func unbanIP(c *gin.Context) (any, error) {
 	singleton.WriteAuditLog(c, model.AuditActionConfigUpdate, "security", 0, "unban ip: "+body.IP, true)
 	return nil, nil
 }
+
+// List login attempts audit trail
+// @Summary List login attempts
+// @Security BearerAuth
+// @Tags admin required
+// @Produce json
+// @Success 200 {object} model.CommonResponse[[]model.LoginAttempt]
+// @Router /security/login-attempts [get]
+func listLoginAttempts(c *gin.Context) ([]model.LoginAttempt, error) {
+	var attempts []model.LoginAttempt
+	if err := singleton.DB.Order("id DESC").Limit(200).Find(&attempts).Error; err != nil {
+		return nil, err
+	}
+	return attempts, nil
+}

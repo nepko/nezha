@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,14 @@ func handleServerExec(c *gin.Context, raw json.RawMessage) (any, error) {
 		return nil, errMCPInvalidArgs("cmd required")
 	}
 
+	// 命令策略纵深防御：与快捷命令/批量命令/AI 助手共用 evaluateCommandPolicy，
+	// 防止持有 ScopeServerExec 的 PAT 通过 MCP server.exec 绕过管理员配置的
+	// 命令策略（黑名单/白名单/高危审批）。MCP 是同步、程序化调用，命中"需审批"
+	// 策略时无法等待人工审批，同样直接拒绝并提示走审批流。
+	if err := evaluateExecPolicy(args.Cmd, args.Args); err != nil {
+		return nil, err
+	}
+
 	req := model.ExecRequest{
 		Cmd:            args.Cmd,
 		Args:           args.Args,
@@ -130,4 +139,28 @@ func callAgentTimeout(reqTimeoutSec uint32, defaultSec uint32) time.Duration {
 		t = defaultSec
 	}
 	return time.Duration(t+5) * time.Second
+}
+
+// evaluateExecPolicy 把 server.exec 的 argv 拼成完整命令行，复用全局命令策略
+// （黑名单/白名单/高危审批）做纵深防御。返回 *mcpError 即可被 dispatch 的
+// classifyToolError 正确转成 MCP tool error，并记录语义化审计 outcome
+// （policy_blocked / policy_approval_required）。策略加载失败时 fail-closed
+// （返回 err 拒绝执行），与快捷命令/批量命令/AI 助手的策略校验行为一致。
+func evaluateExecPolicy(cmd string, args []string) error {
+	full := cmd
+	if len(args) > 0 {
+		full += " " + strings.Join(args, " ")
+	}
+	decision, err := evaluateCommandPolicy(full)
+	if err != nil {
+		return err
+	}
+	if decision.Blocked {
+		return newMCPError(model.MCPOutcomePolicyBlocked, "command blocked by policy: "+decision.Reason)
+	}
+	if decision.NeedsApproval {
+		return newMCPError(model.MCPOutcomePolicyApprovalRequired,
+			"command requires approval ("+decision.Reason+"); MCP server.exec is synchronous and cannot await human approval — use the quick-command/batch approval flow instead")
+	}
+	return nil
 }

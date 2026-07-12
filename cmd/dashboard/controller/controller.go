@@ -135,6 +135,11 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/ws/file/:id", restScopeAllOf(model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete), commonHandler(fmStream))
 	// 二开：文件管理器增强开关查询
 	auth.GET("/file/enhanced", restScopeMiddleware(model.ScopeServerRead), commonHandler(getFMEnhanced))
+	// 二开：文件管理器增强操作（chmod/chown/zip/unzip），复用官方 TaskTypeExec 通道，无需 agent 新 opcode
+	auth.POST("/file/chmod", restScopeMiddleware(model.ScopeServerWrite), commonHandler(handleFMChmod))
+	auth.POST("/file/chown", restScopeMiddleware(model.ScopeServerWrite), commonHandler(handleFMChown))
+	auth.POST("/file/zip", restScopeMiddleware(model.ScopeServerWrite), commonHandler(handleFMZip))
+	auth.POST("/file/unzip", restScopeMiddleware(model.ScopeServerWrite), commonHandler(handleFMUnzip))
 	// 二开：终端 AI 助手（OpenAI 兼容 SSE 流式对话，仅管理员）
 	auth.POST("/ai/chat", restScopeMiddleware(model.ScopeAdminAll), aiChatStream)
 	// 二开：AI Agent 工具清单与对话记忆（仅管理员）
@@ -182,6 +187,12 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/security/locks", restScopeMiddleware(model.ScopeAdminAll), commonHandler(listLoginLocks))
 	auth.POST("/security/locks/unlock", restScopeMiddleware(model.ScopeAdminAll), commonHandler(unlockAccount))
 	auth.POST("/security/locks/unban", restScopeMiddleware(model.ScopeAdminAll), commonHandler(unbanIP))
+	auth.GET("/security/login-attempts", restScopeMiddleware(model.ScopeAdminAll), commonHandler(listLoginAttempts))
+
+	// 二开：操作审计日志（管理员查看与清理，handler 已实现此前未注册）
+	auth.GET("/audit-log", restScopeMiddleware(model.ScopeAdminAll), commonHandler(listAuditLog))
+	auth.GET("/audit-log/actions", restScopeMiddleware(model.ScopeAdminAll), commonHandler(getAuditLogActions))
+	auth.POST("/audit-log/clean", restScopeMiddleware(model.ScopeAdminAll), commonHandler(cleanAuditLog))
 
 	// transfer — 严格使用 nezha:transfer 资源族 scope（read/write/delete）。
 	// 注意：曾经计划让 nezha:server:read 兼听只读 transfer，但 restScopeMiddleware

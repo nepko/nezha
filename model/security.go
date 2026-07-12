@@ -27,3 +27,15 @@ type LoginLockEntry struct {
 	Remaining int64  `json:"remaining"`  // 剩余秒数
 	Reason    string `json:"reason"`
 }
+
+// LoginAttempt 记录每一次登录尝试（成功/失败），用于暴力破解审计与溯源。
+// 与 AuditLog 互补：AuditLog 记录所有运维操作，LoginAttempt 聚焦登录且带
+// (username,ip) 复合索引，便于快速统计某账号/某 IP 的失败次数。CreatedAt 即尝试时间。
+type LoginAttempt struct {
+	Common
+	Username string `gorm:"index:idx_login_attempt_user_ip;size:64" json:"username"`
+	IP       string `gorm:"index:idx_login_attempt_user_ip;size:64" json:"ip"`
+	UserID   uint64 `gorm:"index;default:0" json:"user_id"`
+	Success  bool   `json:"success"`
+	Action   string `gorm:"size:32" json:"action"`
+}

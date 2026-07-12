@@ -41,6 +41,11 @@ type ioStreamContext struct {
 	recordable bool
 	// lastActive 最近一次用户输入时间戳（Unix 秒），用于空闲超时断开。
 	lastActive int64
+	// 关闭两端的幂等保护：StartStream 在任一拷贝 goroutine 退出时会主动
+	// CloseStream 整条流，迫使另一端退出；terminalStream 的 defer 还会再调一次，
+	// 必须保证重复 Close 安全。
+	userIoCloseOnce  sync.Once
+	agentIoCloseOnce sync.Once
 }
 
 // activityReader 包装用户输入流，每次成功读取都刷新 lastActive，用于空闲超时判定。
@@ -333,17 +338,31 @@ func (s *NezhaHandler) RevokeStreamsForPurpose(purpose StreamPurpose) int {
 	return revoked
 }
 
+// safeCloseUser / safeCloseAgent 幂等关闭用户侧/agent 侧 IO，避免 StartStream
+// 与 terminalStream 的 defer 重复 Close 引发问题。
+func (s *ioStreamContext) safeCloseUser() {
+	s.userIoCloseOnce.Do(func() {
+		if s.userIo != nil {
+			_ = s.userIo.Close()
+		}
+	})
+}
+
+func (s *ioStreamContext) safeCloseAgent() {
+	s.agentIoCloseOnce.Do(func() {
+		if s.agentIo != nil {
+			_ = s.agentIo.Close()
+		}
+	})
+}
+
 func (s *NezhaHandler) CloseStream(streamId string) error {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
 
 	if ctx, ok := s.ioStreams[streamId]; ok {
-		if ctx.userIo != nil {
-			ctx.userIo.Close()
-		}
-		if ctx.agentIo != nil {
-			ctx.agentIo.Close()
-		}
+		ctx.safeCloseUser()
+		ctx.safeCloseAgent()
 		delete(s.ioStreams, streamId)
 	}
 
@@ -473,6 +492,11 @@ LOOP:
 	}()
 
 	err = <-errCh
+	// 一端拷贝 goroutine 退出（用户断开或 agent 断开）即主动关闭整条流，
+	// 迫使另一端退出：否则空闲终端下 output goroutine 会永久阻塞在 agentIo.Read，
+	// StartStream 永远等不到第二个 errCh，recorder.flush() 不会被调用，已捕获的
+	// 双向字节全部丢失，录制落库失败。
+	s.CloseStream(streamId)
 	if e2, ok := <-errCh; ok && err == nil {
 		err = e2
 	}

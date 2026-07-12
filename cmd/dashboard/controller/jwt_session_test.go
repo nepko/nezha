@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -30,7 +31,20 @@ func setupJWTSessionTest(t *testing.T) (cleanup func()) {
 	originalConf := singleton.Conf
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.JWTSession{}, &model.WAF{}))
+
+	// SQLite 的 :memory: 数据库按连接相互独立，而 gorm 默认连接池会复用多个连接，
+	// 导致 AutoMigrate 在连接 A 上建的表在连接 B（独立内存库）上不存在，
+	// 表现为偶发的 "no such table: users"（全量并行跑时尤甚）。限制为单连接可确保
+	// 迁移与后续所有查询走同一底层内存库，彻底消除该顺序/竞争依赖。
+	var sqlDB *sql.DB
+	sqlDB, err = db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	// authenticator() 在登录流程中会查询 otp_settings（2FA 校验，且以 Error==nil 判定
+	// 是否启用 2FA——表缺失会被静默当作"未启用"而跳过校验），并写入 audit_logs（登录审计）。
+	// 二者必须迁移，否则测试结果不真实且会刷出被吞掉的 "no such table" 噪声。
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.JWTSession{}, &model.WAF{}, &model.OTPSetting{}, &model.AuditLog{}))
 	singleton.DB = db
 	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{JWTTimeout: 1}}
 
@@ -360,4 +374,19 @@ func TestRefreshResponse_UpdatesSessionExpires(t *testing.T) {
 		"refreshResponse must extend the session's expires_at to the new expiry")
 	require.WithinDuration(t, time.Now(), sess.LastUsedAt, 5*time.Second,
 		"refreshResponse must touch last_used_at")
+
+	// 回归：refresh-token 成功路径的响应契约必须为 success=true。
+	// 早期版本（与登录 bug 同类）把 Success 写死为 false，被 omitempty 省略后
+	// 前端靠 fetcher 解析时会误判为失败。此处锁定契约不再回归。
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Token  string `json:"token"`
+			Expire string `json:"expire"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp),
+		"refreshResponse body must be valid CommonResponse JSON")
+	require.True(t, resp.Success, "refreshResponse must report success=true")
+	require.Equal(t, "fake-token", resp.Data.Token, "refreshResponse must echo the new token")
 }

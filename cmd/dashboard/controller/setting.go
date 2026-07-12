@@ -60,9 +60,11 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 			TerminalRecordingRetentionDays: singleton.Conf.TerminalRecordingRetentionDays,
 			TerminalIdleTimeoutSeconds:     singleton.Conf.TerminalIdleTimeoutSeconds,
 			FMEnhancedEnabled:              singleton.Conf.FMEnhancedEnabled,
+			EnableCommandApproval:          singleton.Conf.EnableCommandApproval,
 			AIEnabled:                      singleton.Conf.AIEnabled,
 			AIBaseURL:                      singleton.Conf.AIBaseURL,
 			AIModel:                        singleton.Conf.AIModel,
+			AITokenBudgetDaily:             singleton.Conf.AITokenBudgetDaily,
 			AIApiKeySet:                    singleton.Conf.AIApiKey != "",
 		},
 		TSDBEnabled: singleton.TSDBEnabled(),
@@ -150,6 +152,9 @@ func updateConfig(c *gin.Context) (any, error) {
 	}
 	if sf.AIMaxTokens != nil {
 		singleton.Conf.AIMaxTokens = *sf.AIMaxTokens
+	}
+	if sf.AITokenBudgetDaily != nil {
+		singleton.Conf.AITokenBudgetDaily = *sf.AITokenBudgetDaily
 	}
 	mcpWasEnabled := singleton.Conf.MCPEnabled()
 	mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)

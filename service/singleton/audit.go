@@ -82,8 +82,27 @@ func WriteLoginAuditLog(c *gin.Context, username string, userID uint64, action s
 		Success:   success,
 	}
 
+	attempt := &model.LoginAttempt{
+		Username: username,
+		IP:       ip,
+		UserID:   userID,
+		Success:  success,
+		Action:   action,
+	}
+
 	go func() {
+		// DB 可能在测试中将全局 singleton.DB 置 nil（cleanup 竞态）或生产瞬时
+		// 不可用；登录审计是 fire-and-forget，应静默失败而非让异步 goroutine
+		// 以 nil 指针 panic 拖垮整个进程。
+		if DB == nil {
+			return
+		}
 		if err := DB.Create(log).Error; err != nil {
+			// 静默失败
+		}
+		// 二开：同步写入独立的登录尝试审计表（带 (username,ip) 复合索引），
+		// 供暴力破解溯源与后续审计页查询。失败静默，不影响主流程。
+		if err := DB.Create(attempt).Error; err != nil {
 			// 静默失败
 		}
 	}()

@@ -122,19 +122,12 @@ func fmStream(c *gin.Context) (any, error) {
 }
 
 // getFMEnhanced 返回文件管理器增强开关状态，供前端决定是否展示在线编辑/权限/压缩等操作入口。
-// 注意：这些操作的真实磁盘行为由外部 nezhahq/agent 实现对应 op 完成，dashboard 仅透传协议字节。
 //
-// 前端↔agent 二进制协议契约（dashboard FM 流是 user↔agent 的字节透传，见 io_stream.StartStream，
-// 因此新 op 的下发与回包不经后端解析，完全由 agent 侧 handler 实现）：
-//
-//	Edit   = 3 : [3][u32 pathLen][path][content...]           回包 NZUP/NERR
-//	Chmod  = 4 : [4][u32 pathLen][path][u32 mode]             mode 为八进制权限(如 0644)
-//	Chown  = 5 : [5][u32 pathLen][path][u32 uid][u32 gid]
-//	Zip    = 6 : [6][u32 srcLen][src][u32 dstLen][dst]         打包 src 到 dst
-//	Unzip  = 7 : [7][u32 srcLen][src][u32 dstLen][dst]         解压 src 到 dst 目录
-//
-// 回包标识符（agent→前端，4 字节）：NZUP = 操作完成；NERR = 错误(其后为错误消息)。
-// TODO(agent): 需在 nezhahq/agent 的 FM handler 实现上述 opcode，本题 dashboard 侧协议与 UI 已就绪。
+// 增强操作的实现方式（无需在 nezhahq/agent 侧新增任何 opcode，官方 agent 直接可用）：
+//   - 编辑写回：复用官方已支持的 Upload opcode（opcode 2），由前端经 FM WebSocket 流发送。
+//   - chmod / chown / zip / unzip：后端 /api/v1/file/{chmod,chown,zip,unzip} 复用官方
+//     TaskTypeExec 命令执行通道（参数化 argv 下发，不经过 shell，天然防注入）。
+// 详见 cmd/dashboard/controller/fm_enhanced.go。
 //
 // @Summary Get FM enhanced flag
 // @Tags auth required

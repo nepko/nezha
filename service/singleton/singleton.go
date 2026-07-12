@@ -136,9 +136,10 @@ func InitDBFromPath(path string) error {
 		model.WAF{}, model.Oauth2Bind{}, model.ServerTransfer{}, model.JWTSession{},
 		model.APIToken{}, model.MCPAuditLog{},
 		model.BatchOperationHistory{}, model.CustomMetric{},
-		model.QuickCommand{}, model.CommandHistory{}, model.CommandPolicy{}, model.CommandApproval{},
+		model.QuickCommand{}, model.CommandHistory{}, model.CommandPolicy{}, model.CommandApproval{}, model.LoginAttempt{},
 		model.TerminalSession{}, model.TerminalSessionEvent{}, model.TerminalRecordingChunk{},
-		model.AuditLog{}, model.AIChatConversation{})
+		model.AuditLog{}, model.AIChatConversation{},
+		model.OTPSetting{}, model.BackupCode{})
 	if err != nil {
 		return err
 	}

@@ -32,14 +32,25 @@ func setupOTP(c *gin.Context) (*OTPSetupResponse, error) {
 	}
 
 	var setting model.OTPSetting
-	singleton.DB.Where("user_id = ?", user.ID).FirstOrCreate(&setting, model.OTPSetting{
-		UserID: user.ID,
-		Secret:  key.Secret(),
-		Enabled: false,
-	})
+	// 已存在 OTP 设置行（例如用户再次打开设置页）时，FirstOrCreate 不会更新
+	// 库内 secret，却会返回新生成的密钥，导致后续 verify 用库内旧密钥校验失败、
+	// 永远无法启用。这里统一用本次新生成的密钥覆盖存储并返回，保证“返回的
+	// secret / 二维码 / 库内 secret”三者一致。
+	if err := singleton.DB.Where("user_id = ?", user.ID).First(&setting).Error; err != nil {
+		setting = model.OTPSetting{
+			UserID: user.ID,
+			Secret:  key.Secret(),
+			Enabled: false,
+		}
+		singleton.DB.Create(&setting)
+	} else {
+		setting.Secret = key.Secret()
+		setting.Enabled = false
+		singleton.DB.Save(&setting)
+	}
 
 	return &OTPSetupResponse{
-		Secret: key.Secret(),
+		Secret: setting.Secret,
 		QRURL:  key.URL(),
 	}, nil
 }
@@ -49,34 +60,34 @@ type OTPVerifyRequest struct {
 	BackupCode string `json:"backup_code,omitempty"`
 }
 
-// verifyOTP 验证 OTP 码并启用 2FA
-func verifyOTP(c *gin.Context) (bool, error) {
+// verifyOTP 验证 OTP 码并启用 2FA，返回生成的备份码列表
+func verifyOTP(c *gin.Context) ([]string, error) {
 	user := getAuthUser(c)
 	if user == nil {
-		return false, singleton.Localizer.ErrorT("unauthorized")
+		return nil, singleton.Localizer.ErrorT("unauthorized")
 	}
 
 	var req OTPVerifyRequest
 	if err := c.ShouldBind(&req); err != nil {
-		return false, err
+		return nil, err
 	}
 
 	var setting model.OTPSetting
 	if err := singleton.DB.Where("user_id = ?", user.ID).First(&setting).Error; err != nil {
-		return false, singleton.Localizer.ErrorT("otp not setup")
+		return nil, singleton.Localizer.ErrorT("otp not setup")
 	}
 
-	if !totp.Validate(setting.Secret, req.Code) {
-		return false, singleton.Localizer.ErrorT("invalid otp code")
+	if !totp.Validate(req.Code, setting.Secret) {
+		return nil, singleton.Localizer.ErrorT("invalid otp code")
 	}
 
 	setting.Enabled = true
 	singleton.DB.Save(&setting)
 
-	generateBackupCodes(user.ID)
+	codes := generateBackupCodes(user.ID)
 
 	singleton.WriteAuditLog(c, model.AuditActionUserUpdate, "user", user.ID, "2FA enabled", true)
-	return true, nil
+	return codes, nil
 }
 
 // disableOTP 禁用 2FA
@@ -95,7 +106,7 @@ func disableOTP(c *gin.Context) (bool, error) {
 	singleton.DB.Where("user_id = ? AND enabled = ?", user.ID, true).First(&setting)
 
 	if req.Code != "" {
-		if !totp.Validate(setting.Secret, req.Code) {
+		if !totp.Validate(req.Code, setting.Secret) {
 			return false, singleton.Localizer.ErrorT("invalid otp code")
 		}
 	} else if req.BackupCode != "" {

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -77,11 +78,35 @@ func invalidateEnabledPolicyCache() {
 	enabledPolicyCache.Store([]model.CommandPolicy(nil))
 }
 
+// parsePolicyPatterns 把 commands 列（合法 JSON 数组文本）解析为策略正则模式列表。
+// 兼容历史双重编码数据：早期 model.CommandPolicy.BeforeSave 把 CommandsRaw 又
+// json.Marshal 一次，导致 commands 列变成被引号包裹两次的字符串，evaluateCommandPolicy
+// 直接 json.Unmarshal 进 []string 会永远失败、命令策略整条链路失效。此处先尝试直接
+// 解析为数组，失败再尝试把它当作一层 JSON 字符串解包后解析，从而兼容存量数据。
+func parsePolicyPatterns(encoded string) ([]string, error) {
+	var patterns []string
+	if err := json.Unmarshal([]byte(encoded), &patterns); err == nil {
+		return patterns, nil
+	}
+	var inner string
+	if err := json.Unmarshal([]byte(encoded), &inner); err == nil {
+		if err2 := json.Unmarshal([]byte(inner), &patterns); err2 == nil {
+			return patterns, nil
+		}
+	}
+	return nil, fmt.Errorf("invalid command policy patterns: %s", encoded)
+}
+
 // evaluateCommandPolicy 评估命令是否通过已启用的策略：
 //   - 黑名单命中且需审批 → NeedsApproval
 //   - 黑名单命中且无需审批 → Blocked
 //   - 白名单启用且未命中任何模式 → Blocked
 func evaluateCommandPolicy(command string) (CommandPolicyDecision, error) {
+	// 二开：命令审批总开关（默认关闭）。关闭时即使存在 RequireApproval 策略也直接放行，
+	// 彻底避免个人/单人场景下的审批摩擦；开启后才按策略执行审批闸。
+	if !singleton.Conf.EnableCommandApproval {
+		return CommandPolicyDecision{Allow: true}, nil
+	}
 	policies, err := loadEnabledPolicies()
 	if err != nil {
 		return CommandPolicyDecision{}, err
@@ -89,8 +114,8 @@ func evaluateCommandPolicy(command string) (CommandPolicyDecision, error) {
 
 	decision := CommandPolicyDecision{Allow: true}
 	for _, p := range policies {
-		var patterns []string
-		if err := json.Unmarshal([]byte(p.Commands), &patterns); err != nil || len(patterns) == 0 {
+		patterns, perr := parsePolicyPatterns(p.Commands)
+		if perr != nil || len(patterns) == 0 {
 			continue
 		}
 		matched := false
@@ -155,23 +180,35 @@ func toUint64IDs(in []uint) []uint64 {
 	return out
 }
 
-// dispatchCommandToServers 向指定服务器下发命令（审批通过后调用）
-func dispatchCommandToServers(command string, serverIDs []uint64) ([]*model.BatchCommandResult, error) {
+// dispatchCommandToServers 向指定服务器下发命令（审批通过后调用）。
+// 安全闸：与 executeBatchCommand / MCP server.exec / AI execute_command 一致，
+// 下发前必须逐服务器经 server.HasPermission(c) 授权，尊重受限 PAT 的 server_ids
+// 白名单（与 R22 的授权一致性要求对齐）。命令级策略硬闸由 approveCommandApproval
+// 在调用本函数前统一评估，避免审批通道成为绕过命令策略的旁路。
+func dispatchCommandToServers(c *gin.Context, command string, serverIDs []uint64) ([]*model.BatchCommandResult, error) {
 	serverMap := singleton.ServerShared.GetList()
 	results := make([]*model.BatchCommandResult, 0)
 	for _, id := range serverIDs {
 		server, ok := serverMap[id]
 		result := &model.BatchCommandResult{ServerID: id}
-		if ok && server.GetTaskStream() != nil {
-			taskData, _ := json.Marshal(command)
-			if err := server.SendTask(&pb.Task{Type: model.TaskTypeCommand, Data: string(taskData)}); err != nil {
-				result.Error = err.Error()
-			} else {
-				result.Success = true
-				result.Output = "命令已下发"
-			}
-		} else {
+		if !ok || server.GetTaskStream() == nil {
 			result.Error = "服务器离线"
+			results = append(results, result)
+			continue
+		}
+		// 服务器访问授权：受限 PAT 即使持有 admin:* 作用域，也只能在
+		// 其 server_ids 白名单内服务器下发，与 AI/PAT 命令下发路径一致。
+		if !server.HasPermission(c) {
+			result.Error = "无权限访问该服务器"
+			results = append(results, result)
+			continue
+		}
+		taskData, _ := json.Marshal(command)
+		if err := server.SendTask(&pb.Task{Type: model.TaskTypeCommand, Data: string(taskData)}); err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Success = true
+			result.Output = "命令已下发"
 		}
 		results = append(results, result)
 	}
@@ -215,13 +252,23 @@ func approveCommandApproval(c *gin.Context) ([]*model.BatchCommandResult, error)
 		return nil, err
 	}
 
+	// 命令策略硬闸：审批通过不代表可凌驾于安全策略之上。命中黑名单（硬拒）或
+	// 白名单未命中等 Blocked 判定必须 fail-closed 拦截，防止"审批通道"成为绕过
+	// 命令策略的旁路。NeedsApproval 不在拦截之列——审批单正是为这类命令建立，
+	// 二次拦截会形成死循环。拦截时审批单保持 pending，不标记已通过。
+	if decision, err := evaluateCommandPolicy(approval.Command); err == nil && decision.Blocked {
+		singleton.WriteAuditLog(c, model.AuditActionConfigUpdate, "command_approval", approval.ID,
+			"blocked by policy, not dispatched: "+approval.Command, false)
+		return nil, fmt.Errorf("命令被安全策略拦截，未执行: %s", decision.Reason)
+	}
+
 	approval.Status = model.CommandApprovalApproved
 	approval.Approver = uint64(c.GetUint("user_id"))
 	if err := singleton.DB.Save(&approval).Error; err != nil {
 		return nil, err
 	}
 
-	results, err := dispatchCommandToServers(approval.Command, serverIDs)
+	results, err := dispatchCommandToServers(c, approval.Command, serverIDs)
 	if err != nil {
 		return nil, err
 	}

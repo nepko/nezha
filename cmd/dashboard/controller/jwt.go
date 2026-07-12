@@ -141,7 +141,7 @@ func initParams() *jwt.GinJWTMiddleware {
 		LoginResponse: func(c *gin.Context, code int, token string, expire time.Time) {
 			setCSRFCookie(c)
 			c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
-				Success: false,
+				Success: true,
 				Data: model.LoginResponse{
 					Token:  token,
 					Expire: expire.Format(time.RFC3339),
@@ -282,10 +282,17 @@ func authenticator() func(c *gin.Context) (any, error) {
 			if loginVals.OtpToken == "" {
 				return nil, ErrRequire2FA
 			}
-			if !totp.Validate(otpSetting.Secret, loginVals.OtpToken) {
-				singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
-				recordFailedLogin(user.ID, realip)
-				return nil, jwt.ErrFailedAuthentication
+			if !totp.Validate(loginVals.OtpToken, otpSetting.Secret) {
+				// 动态码校验失败：尝试用备份码登录（设备丢失时的应急恢复手段）。
+				// 原先登录入口只认 TOTP 动态码，备份码形同虚设——丢了设备即永久锁死。
+				var bc model.BackupCode
+				if err := singleton.DB.Where("user_id = ? AND code = ? AND used = ?", user.ID, loginVals.OtpToken, false).First(&bc).Error; err != nil {
+					singleton.WriteLoginAuditLog(c, loginVals.Username, user.ID, model.AuditActionLoginFailed, false)
+					recordFailedLogin(user.ID, realip)
+					return nil, jwt.ErrFailedAuthentication
+				}
+				// 备份码命中：标记已用并放行（落到下方统一签发 JWT）
+				singleton.DB.Model(&bc).Update("used", true)
 			}
 		}
 
@@ -357,7 +364,7 @@ func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 	}
 	setCSRFCookie(c)
 	c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
-		Success: false,
+		Success: true,
 		Data: model.LoginResponse{
 			Token:  token,
 			Expire: expire.Format(time.RFC3339),

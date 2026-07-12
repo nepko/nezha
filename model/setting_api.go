@@ -13,7 +13,7 @@ type SettingForm struct {
 	CustomCode                  string `json:"custom_code,omitempty" validate:"optional"`
 	CustomCodeDashboard         string `json:"custom_code_dashboard,omitempty" validate:"optional"`
 	WebRealIPHeader             string `json:"web_real_ip_header,omitempty" validate:"optional"`   // 前端真实IP
-	AgentRealIPHeader           string `json:"agent_real_ip_header,omitempty" validate:"optional"` // Agent真实IP
+	AgentRealIPHeader            string `json:"agent_real_ip_header,omitempty" validate:"optional"` // Agent真实IP
 	UserTemplate                string `json:"user_template,omitempty" validate:"optional"`
 
 	AgentTLS                    bool `json:"tls,omitempty" validate:"optional"`
@@ -31,12 +31,14 @@ type SettingForm struct {
 
 	// 二开：终端 AI 助手（OpenAI 兼容）。ai_api_key 空字符串表示“保留已配置密钥”，
 	// 仅在用户显式填写时才覆盖；绝不通过 GET /setting 回传明文。
-	AIEnabled    *bool  `json:"ai_enabled,omitempty" validate:"optional"`
-	AIBaseURL    string `json:"ai_base_url,omitempty" validate:"optional"`
-	AIApiKey     string `json:"ai_api_key,omitempty" validate:"optional"`
-	AIModel      string `json:"ai_model,omitempty" validate:"optional"`
-	AITemperature *float64 `json:"ai_temperature,omitempty" validate:"optional"`
-	AIMaxTokens  *int   `json:"ai_max_tokens,omitempty" validate:"optional"`
+	AIEnabled           *bool   `json:"ai_enabled,omitempty" validate:"optional"`
+	AIBaseURL           string  `json:"ai_base_url,omitempty" validate:"optional"`
+	AIApiKey            string  `json:"ai_api_key,omitempty" validate:"optional"`
+	AIModel             string  `json:"ai_model,omitempty" validate:"optional"`
+	AITemperature       *float64 `json:"ai_temperature,omitempty" validate:"optional"`
+	AIMaxTokens         *int    `json:"ai_max_tokens,omitempty" validate:"optional"`
+	// 二开：AI 每用户每日 token 预算（0=不限）。
+	AITokenBudgetDaily  *int    `json:"ai_token_budget_daily,omitempty" validate:"optional"`
 }
 
 type Setting struct {
@@ -51,12 +53,15 @@ type Setting struct {
 	TerminalRecordingRetentionDays int  `json:"terminal_recording_retention_days,omitempty" gorm:"-"`
 	TerminalIdleTimeoutSeconds     int  `json:"terminal_idle_timeout_seconds,omitempty" gorm:"-"`
 	FMEnhancedEnabled              bool `json:"fm_enhanced_enabled,omitempty" gorm:"-"`
+	// 二开：命令审批总开关（默认关闭，GET /setting 回传前端设置页）。
+	EnableCommandApproval bool `json:"enable_command_approval,omitempty" gorm:"-"`
 
 	// 二开：终端 AI 助手开关与连接信息（不含明文 API Key，仅暴露是否已配置）。
-	AIEnabled    bool `json:"ai_enabled,omitempty" gorm:"-"`
-	AIBaseURL    string `json:"ai_base_url,omitempty" gorm:"-"`
-	AIModel      string `json:"ai_model,omitempty" gorm:"-"`
-	AIApiKeySet  bool   `json:"ai_api_key_set,omitempty" gorm:"-"`
+	AIEnabled           bool `json:"ai_enabled,omitempty" gorm:"-"`
+	AIBaseURL           string `json:"ai_base_url,omitempty" gorm:"-"`
+	AIModel             string `json:"ai_model,omitempty" gorm:"-"`
+	AITokenBudgetDaily  int  `json:"ai_token_budget_daily,omitempty" gorm:"-"`
+	AIApiKeySet         bool   `json:"ai_api_key_set,omitempty" gorm:"-"`
 }
 
 type FrontendTemplate struct {

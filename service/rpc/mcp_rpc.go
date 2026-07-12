@@ -94,12 +94,25 @@ func allocateMCPTaskID() uint64 {
 //
 // 返回的 raw JSON 是 agent 端 TaskResult.Data 的原文。
 func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any, timeout time.Duration) (json.RawMessage, error) {
+	return callAgent(ctx, serverID, taskType, params, timeout, false)
+}
+
+// CallAgentUnmanaged 与 CallAgent 同语义，但跳过 MCP kill switch 检查。
+// 供「拥有独立开关」的功能使用（如文件管理器增强 chmod/chown/zip/unzip），
+// 使这些操作不受 EnableMCP 开关影响——管理员关闭 MCP 入口时不会连带失效。
+func CallAgentUnmanaged(ctx context.Context, serverID uint64, taskType uint64, params any, timeout time.Duration) (json.RawMessage, error) {
+	return callAgent(ctx, serverID, taskType, params, timeout, true)
+}
+
+// callAgent 是 CallAgent / CallAgentUnmanaged 的内部实现。bypassKillSwitch=true
+// 时跳过 MCP kill switch（供 FM 增强等拥有独立开关的功能使用）。
+func callAgent(ctx context.Context, serverID uint64, taskType uint64, params any, timeout time.Duration, bypassKillSwitch bool) (json.RawMessage, error) {
 	if !model.IsMCPRPCResult(taskType) {
 		return nil, errors.New("CallAgent: task type is not registered as MCP RPC")
 	}
 
 	killSwitch := mcpKillSwitchObserver()
-	if killSwitch() {
+	if killSwitch() && !bypassKillSwitch {
 		return nil, ErrMCPDisabled
 	}
 
@@ -124,6 +137,7 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 		result:    resultCh,
 		cancel:    cancelCh,
 		cancelled: new(atomic.Bool),
+		fm:        bypassKillSwitch,
 	}
 
 	if hook := testKillSwitchAfterUpfrontCheck; hook != nil {
@@ -139,7 +153,7 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 	// operator sets EnableMCP=false BEFORE running the sweep, re-reading the
 	// observer here after Store guarantees we either see it disabled, or the
 	// sweep saw our now-registered entry and flipped entry.cancelled.
-	if killSwitch() || entry.cancelled.Load() {
+	if (killSwitch() && !bypassKillSwitch) || entry.cancelled.Load() {
 		return nil, ErrMCPDisabled
 	}
 
@@ -213,6 +227,9 @@ type mcpInflightEntry struct {
 	cancel    chan struct{}
 	cancelled *atomic.Bool
 	closeOnce sync.Once
+	// fm 为 true 表示这是文件管理器增强调用（拥有独立开关），不受 MCP kill
+	// switch 影响：CancelAllMCPInflight 会跳过它，MCP 关闭时不误杀其执行。
+	fm bool
 }
 
 // closeCancel closes the entry's cancel channel exactly once. Concurrent
@@ -241,6 +258,10 @@ func CancelAllMCPInflight() int {
 	mcpInflight.Range(func(key, value any) bool {
 		entry, ok := value.(*mcpInflightEntry)
 		if !ok {
+			return true
+		}
+		// FM 增强调用拥有独立开关，不受 MCP kill switch 影响，跳过不取消。
+		if entry.fm {
 			return true
 		}
 		if entry.cancelled != nil {
